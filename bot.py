@@ -4,7 +4,7 @@ from flask import Flask, request
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-TOKEN = os.getenv("TOKEN")
+TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 653170487
 
 app_flask = Flask(__name__)
@@ -121,34 +121,18 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if t=="📥 الطلبات" and (is_admin(uid) or is_leader(uid)):
         for r in cur.execute("SELECT rowid,* FROM requests"):
             await update.message.reply_text(f"ID:{r[0]} | {r[1]} | {r[5]}")
-        context.user_data["s"]="rev"
-        return await update.message.reply_text("اكتب: قبول ID او رفض ID")
 
-    if s=="rev":
-        cmd,i=t.split()
-        r=cur.execute("SELECT * FROM requests WHERE rowid=?",(i,)).fetchone()
-        if cmd=="قبول":
-            cur.execute("INSERT INTO players VALUES (?,?,?,?,?)",r)
-        cur.execute("DELETE FROM requests WHERE rowid=?",(i,))
-        conn.commit();context.user_data.clear()
-        return await update.message.reply_text("تمت العملية ✅")
+def main():
+    if not TOKEN:
+        print("❌ التوكن مفقود")
+        return
 
-telegram_app = ApplicationBuilder().token(TOKEN).build()
-telegram_app.add_handler(CommandHandler("start", start))
-telegram_app.add_handler(MessageHandler(filters.TEXT, handle))
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT, handle))
 
-@app_flask.route("/", methods=["POST"])
-def webhook():
-    update = Update.de_json(request.get_json(force=True), telegram_app.bot)
-    telegram_app.update_queue.put_nowait(update)
-    return "ok"
-
-@app_flask.route("/", methods=["GET"])
-def home():
-    return "Bot is running!"
+    print("🚀 Bot started")
+    app.run_polling()
 
 if __name__ == "__main__":
-    telegram_app.initialize()
-    telegram_app.start()
-    telegram_app.bot.set_webhook(url=os.getenv("WEBHOOK_URL"))
-    app_flask.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    main()
