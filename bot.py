@@ -1,8 +1,13 @@
+import os
 import sqlite3
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-TOKEN = "YOUR_BOT_TOKEN"
+# ================= CONFIG =================
+TOKEN = os.getenv("TOKEN")
+
+if not TOKEN:
+    raise ValueError("❌ TOKEN مو موجود! ضيفه بالريلواي")
 
 ADMIN_IDS = [653170487]
 
@@ -57,16 +62,20 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     role = get_role(user)
     state = context.user_data.get("state")
 
-    # ===== ADMIN ADD LEADER =====
+    # ===== ADD LEADER =====
     if text == "اضافة قائد" and role == "admin":
         context.user_data["state"] = "add_leader"
         return await update.message.reply_text("ارسل ايدي")
 
     if state == "add_leader":
-        c.execute("INSERT OR REPLACE INTO users VALUES (?,?)", (int(text), "leader"))
-        conn.commit()
+        try:
+            c.execute("INSERT OR REPLACE INTO users VALUES (?,?)", (int(text), "leader"))
+            conn.commit()
+            await update.message.reply_text("✅ تم اضافة قائد")
+        except:
+            await update.message.reply_text("❌ ايدي غير صحيح")
         context.user_data.clear()
-        return await update.message.reply_text("✅ تم")
+        return
 
     # ===== ADD CLUB =====
     if text == "اضافة نادي" and role == "admin":
@@ -79,11 +88,15 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("ايدي الرئيس")
 
     if state == "club_pres":
-        c.execute("INSERT INTO clubs (name,president_id) VALUES (?,?)", (context.user_data["club_name"], int(text)))
-        c.execute("INSERT OR REPLACE INTO users VALUES (?,?)", (int(text), "president"))
-        conn.commit()
+        try:
+            c.execute("INSERT INTO clubs (name,president_id) VALUES (?,?)", (context.user_data["club_name"], int(text)))
+            c.execute("INSERT OR REPLACE INTO users VALUES (?,?)", (int(text), "president"))
+            conn.commit()
+            await update.message.reply_text("✅ تم اضافة نادي")
+        except:
+            await update.message.reply_text("❌ خطأ بالايدي")
         context.user_data.clear()
-        return await update.message.reply_text("✅ تم اضافة نادي")
+        return
 
     # ===== ADD PLAYER =====
     if text == "اضافة لاعب" and role == "president":
@@ -104,24 +117,24 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if state == "p_serial":
         if c.execute("SELECT * FROM players WHERE serial=?", (text,)).fetchone():
-            return await update.message.reply_text("❌ مكرر")
+            return await update.message.reply_text("❌ لاعب مكرر")
         context.user_data["serial"] = text
         context.user_data["state"] = "p_device"
-        return await update.message.reply_text("الجهاز")
+        return await update.message.reply_text("اسم الجهاز")
 
     if state == "p_device":
         club = c.execute("SELECT id FROM clubs WHERE president_id=?", (user,)).fetchone()
         if not club:
-            return await update.message.reply_text("ما عندك نادي")
+            return await update.message.reply_text("❌ ما عندك نادي")
 
         d = context.user_data
         c.execute("INSERT INTO requests (name,fb,serial,device,club_id,president_id) VALUES (?,?,?,?,?,?)",
                   (d["name"], d["fb"], d["serial"], text, club[0], user))
         conn.commit()
         context.user_data.clear()
-        return await update.message.reply_text("📨 تم ارسال الطلب")
+        return await update.message.reply_text("📨 تم ارسال الطلب للقادة")
 
-    # ===== REQUESTS (LEADER) =====
+    # ===== REQUESTS =====
     if text == "الطلبات" and role == "leader":
         reqs = c.execute("SELECT * FROM requests").fetchall()
         if not reqs:
@@ -130,9 +143,10 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = ""
         for r in reqs:
             msg += f"\nID:{r[0]} | {r[1]}"
+        msg += "\n\nاكتب: قبول ID او رفض ID"
         return await update.message.reply_text(msg)
 
-    if text.startswith("قبول"):
+    if text.startswith("قبول") and role == "leader":
         rid = int(text.split()[1])
         r = c.execute("SELECT * FROM requests WHERE id=?", (rid,)).fetchone()
         if r:
@@ -142,7 +156,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.commit()
             return await update.message.reply_text("✅ تمت الموافقة")
 
-    if text.startswith("رفض"):
+    if text.startswith("رفض") and role == "leader":
         rid = int(text.split()[1])
         c.execute("DELETE FROM requests WHERE id=?", (rid,))
         conn.commit()
@@ -157,7 +171,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             players = c.execute("SELECT name FROM players WHERE club_id=?", (club[0],))
             for p in players:
                 msg += f"- {p[0]}\n"
-        return await update.message.reply_text(msg or "ماكو")
+        return await update.message.reply_text(msg or "ماكو اندية")
 
     # ===== SEARCH =====
     if text == "بحث لاعب":
@@ -167,22 +181,22 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if state == "search":
         res = c.execute("SELECT name,fb FROM players WHERE name LIKE ? OR fb LIKE ?",
                         (f"%{text}%", f"%{text}%")).fetchall()
-        if not res:
-            return await update.message.reply_text("ماكو")
-        msg = "\n".join([f"{r[0]} | {r[1]}" for r in res])
         context.user_data.clear()
+        if not res:
+            return await update.message.reply_text("ماكو لاعب")
+        msg = "\n".join([f"{r[0]} | {r[1]}" for r in res])
         return await update.message.reply_text(msg)
 
     # ===== TRANSFER =====
     if text == "فتح الانتقالات":
         c.execute("UPDATE settings SET value='open'")
         conn.commit()
-        return await update.message.reply_text("✅ مفتوحة")
+        return await update.message.reply_text("✅ تم فتح الانتقالات")
 
     if text == "غلق الانتقالات":
         c.execute("UPDATE settings SET value='closed'")
         conn.commit()
-        return await update.message.reply_text("❌ مغلقة")
+        return await update.message.reply_text("❌ تم غلق الانتقالات")
 
 # ================= RUN =================
 
@@ -190,4 +204,5 @@ app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT, handle))
 
+print("🚀 BOT STARTED...")
 app.run_polling()
