@@ -1,13 +1,14 @@
+import os
 import re
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-BOT_TOKEN = "PUT_YOUR_TOKEN_HERE"
+# ✅ ياخذ التوكن من Railway
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 leaders = {}
 clubs = {}
 transfers_open = False
-
 user_state = {}
 
 # ================= MENUS =================
@@ -80,10 +81,12 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == "🏟️ إدارة الأندية":
         await update.message.reply_text("اختر:", reply_markup=ReplyKeyboardMarkup([
             ["📋 عرض الأندية", "➕ إضافة نادي"],
+            ["🟢 فتح الانتقالات", "🔴 غلق الانتقالات"],
             ["🔙 رجوع"]
         ], resize_keyboard=True))
         return
 
+    # ===== إضافة نادي =====
     if text == "➕ إضافة نادي":
         user_state[user_id] = "club_name"
         await update.message.reply_text("📌 أرسل اسم النادي:", reply_markup=back_button())
@@ -133,19 +136,19 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg)
         return
 
-    # ===== التحكم بالانتقالات =====
-    if text == "فتح الانتقالات":
+    # ===== الانتقالات =====
+    if text == "🟢 فتح الانتقالات":
         transfers_open = True
         await update.message.reply_text("🟢 تم فتح الانتقالات")
         return
 
-    if text == "غلق الانتقالات":
+    if text == "🔴 غلق الانتقالات":
         transfers_open = False
         await update.message.reply_text("🔴 تم غلق الانتقالات")
         return
 
     # ===== إضافة لاعب =====
-    if text == "إضافة لاعب":
+    if text == "➕ إضافة لاعب":
         if not transfers_open:
             await update.message.reply_text("❌ الانتقالات مغلقة")
             return
@@ -173,7 +176,10 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_state.get(user_id) == "player_id":
         context.user_data["player_id"] = text
 
-        # إضافة لأول نادي (تقدر تطورها لاحقاً)
+        if not clubs:
+            await update.message.reply_text("❌ ماكو نادي")
+            return
+
         club_name = list(clubs.keys())[0]
 
         clubs[club_name]["players"].append({
