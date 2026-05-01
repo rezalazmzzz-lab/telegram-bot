@@ -1,174 +1,249 @@
 import os
+import re
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
 TOKEN = os.getenv("BOT_TOKEN")
 
-# ================== DATABASE ==================
-clubs = {}
-players = {}
-leaders = [653170487]  # 👑 انت القائد الأساسي
+# ================= DATA =================
+leaders = {653170487}  # 👑 انت
+clubs = {}  # club_name: {owner_id, owner_name, fb, players:[]}
+requests = []  # طلبات اللاعبين
 transfer_open = False
-user_state = {}
 
-# ================== KEYBOARDS ==================
-main_menu = ReplyKeyboardMarkup([
-    ["👑 إدارة القادة", "🏟 إدارة الأندية"],
-    ["📨 الطلبات", "🔍 بحث لاعب"]
-], resize_keyboard=True)
+# ================= MENUS =================
+def main_menu():
+    return ReplyKeyboardMarkup([
+        ["👑 القادة", "🏟 الأندية"],
+        ["📥 الطلبات", "🔍 بحث لاعب"]
+    ], resize_keyboard=True)
 
-leaders_menu = ReplyKeyboardMarkup([
-    ["➕ إضافة قائد", "➖ حذف قائد"],
-    ["🟢 فتح الانتقالات", "🔴 غلق الانتقالات"],
-    ["🔙 رجوع"]
-], resize_keyboard=True)
+def back():
+    return ReplyKeyboardMarkup([["🔙 رجوع"]], resize_keyboard=True)
 
-clubs_menu = ReplyKeyboardMarkup([
-    ["📋 عرض الأندية", "➕ إضافة نادي"],
-    ["🔙 رجوع"]
-], resize_keyboard=True)
+# ================= VALIDATION =================
+def is_fb(link):
+    return "facebook.com" in link
 
-# ================== START ==================
+async def valid_user(app, uid):
+    try:
+        await app.bot.get_chat(uid)
+        return True
+    except:
+        return False
+
+def find_player(text):
+    for c in clubs:
+        for p in clubs[c]["players"]:
+            if text in p["name"] or text in p["fb"]:
+                return c, p
+    return None, None
+
+# ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("اهلا 👋", reply_markup=main_menu)
+    await update.message.reply_text("👋 أهلاً", reply_markup=main_menu())
 
-# ================== MAIN HANDLER ==================
+# ================= HANDLER =================
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global transfer_open
 
     text = update.message.text
-    user_id = update.message.from_user.id
+    uid = update.effective_user.id
+    state = context.user_data.get("s")
 
     # رجوع
     if text == "🔙 رجوع":
-        user_state.pop(user_id, None)
-        await update.message.reply_text("رجعنا", reply_markup=main_menu)
-        return
+        context.user_data.clear()
+        return await update.message.reply_text("رجعنا", reply_markup=main_menu())
 
-    # ================== القادة ==================
-    if text == "👑 إدارة القادة":
-        if user_id not in leaders:
-            await update.message.reply_text("❌ فقط القادة")
-            return
-        await update.message.reply_text("إدارة القادة:", reply_markup=leaders_menu)
+    # ================= القادة =================
+    if text == "👑 القادة":
+        if uid not in leaders:
+            return await update.message.reply_text("❌ مو قائد")
+        return await update.message.reply_text("👑 إدارة القادة", reply_markup=ReplyKeyboardMarkup([
+            ["➕ قائد"],
+            ["🔙 رجوع"]
+        ], resize_keyboard=True))
 
-    elif text == "➕ إضافة قائد":
-        user_state[user_id] = "add_leader"
-        await update.message.reply_text("أرسل ID القائد")
+    if text == "➕ قائد":
+        context.user_data["s"] = "leader_id"
+        return await update.message.reply_text("ارسل ID:")
 
-    elif text == "➖ حذف قائد":
-        user_state[user_id] = "remove_leader"
-        await update.message.reply_text("أرسل ID")
+    if state == "leader_id":
+        if not text.isdigit():
+            return await update.message.reply_text("❌ ID غلط")
 
-    elif text == "🟢 فتح الانتقالات":
-        if user_id not in leaders:
-            return
-        transfer_open = True
-        await update.message.reply_text("🟢 تم فتح الانتقالات")
+        if not await valid_user(context.application, int(text)):
+            return await update.message.reply_text("❌ هذا ID غير موجود")
 
-    elif text == "🔴 غلق الانتقالات":
-        if user_id not in leaders:
-            return
-        transfer_open = False
-        await update.message.reply_text("🔴 تم غلق الانتقالات")
+        context.user_data["lid"] = int(text)
+        context.user_data["s"] = "leader_fb"
+        return await update.message.reply_text("ارسل رابط الفيس:")
 
-    # ================== الأندية ==================
-    elif text == "🏟 إدارة الأندية":
-        await update.message.reply_text("إدارة الأندية:", reply_markup=clubs_menu)
+    if state == "leader_fb":
+        if not is_fb(text):
+            return await update.message.reply_text("❌ رابط غلط")
 
-    elif text == "➕ إضافة نادي":
-        if user_id not in leaders:
-            await update.message.reply_text("❌ فقط القادة")
-            return
-        user_state[user_id] = "club_name"
-        await update.message.reply_text("أرسل اسم النادي")
+        leaders.add(context.user_data["lid"])
+        context.user_data.clear()
+        return await update.message.reply_text("✅ تم إضافة قائد")
 
-    elif text == "📋 عرض الأندية":
-        if not clubs:
-            await update.message.reply_text("لا يوجد أندية")
-            return
+    # ================= الأندية =================
+    if text == "🏟 الأندية":
+        return await update.message.reply_text("🏟 إدارة الأندية", reply_markup=ReplyKeyboardMarkup([
+            ["➕ نادي", "📋 عرض"],
+            ["🔄 فتح", "🔒 غلق"],
+            ["🔙 رجوع"]
+        ], resize_keyboard=True))
+
+    # إضافة نادي
+    if text == "➕ نادي":
+        if uid not in leaders:
+            return await update.message.reply_text("❌ فقط القادة")
+
+        context.user_data["s"] = "owner_name"
+        return await update.message.reply_text("اسم رئيس النادي:")
+
+    if state == "owner_name":
+        context.user_data["oname"] = text
+        context.user_data["s"] = "owner_fb"
+        return await update.message.reply_text("رابط الفيس:")
+
+    if state == "owner_fb":
+        if not is_fb(text):
+            return await update.message.reply_text("❌ رابط غلط")
+
+        context.user_data["ofb"] = text
+        context.user_data["s"] = "owner_id"
+        return await update.message.reply_text("ID التلكرام:")
+
+    if state == "owner_id":
+        if not text.isdigit():
+            return await update.message.reply_text("❌ ID غلط")
+
+        if not await valid_user(context.application, int(text)):
+            return await update.message.reply_text("❌ ID غير موجود")
+
+        context.user_data["oid"] = int(text)
+        context.user_data["s"] = "club_name"
+        return await update.message.reply_text("اسم النادي:")
+
+    if state == "club_name":
+        clubs[text] = {
+            "owner_id": context.user_data["oid"],
+            "owner_name": context.user_data["oname"],
+            "fb": context.user_data["ofb"],
+            "players": []
+        }
+        context.user_data.clear()
+        return await update.message.reply_text("✅ تم إنشاء النادي")
+
+    # عرض الأندية
+    if text == "📋 عرض":
         msg = ""
         for c in clubs:
-            msg += f"🏟 {c}\n"
-        await update.message.reply_text(msg)
+            msg += f"\n🏟 {c}\n👤 {clubs[c]['owner_name']}\n"
+        return await update.message.reply_text(msg or "ماكو أندية")
 
-    # ================== بحث لاعب ==================
-    elif text == "🔍 بحث لاعب":
-        user_state[user_id] = "search"
-        await update.message.reply_text("أرسل اسم اللاعب أو رابط الفيس")
+    # ================= الانتقالات =================
+    if text == "🔄 فتح" and uid in leaders:
+        transfer_open = True
+        return await update.message.reply_text("🟢 تم فتح الانتقالات")
 
-    # ================== الحالات ==================
-    elif user_id in user_state:
+    if text == "🔒 غلق" and uid in leaders:
+        transfer_open = False
+        return await update.message.reply_text("🔴 تم غلق الانتقالات")
 
-        state = user_state[user_id]
+    # ================= رئيس النادي =================
+    for c in clubs:
+        if uid == clubs[c]["owner_id"]:
 
-        # إضافة قائد
-        if state == "add_leader":
-            try:
-                new_id = int(text)
-                if new_id not in leaders:
-                    leaders.append(new_id)
-                await update.message.reply_text("✅ تم إضافة قائد")
-            except:
-                await update.message.reply_text("❌ ID غير صالح")
-            user_state.pop(user_id)
+            # إضافة لاعب
+            if text == "➕ لاعب":
+                if not transfer_open:
+                    return await update.message.reply_text("❌ مغلقة")
 
-        # حذف قائد
-        elif state == "remove_leader":
-            try:
-                leaders.remove(int(text))
-                await update.message.reply_text("✅ تم الحذف")
-            except:
-                await update.message.reply_text("❌ غير موجود")
-            user_state.pop(user_id)
+                context.user_data["s"] = "p_name"
+                context.user_data["club"] = c
+                return await update.message.reply_text("اسم اللاعب:")
 
-        # إضافة نادي
-        elif state == "club_name":
-            context.user_data["club"] = text
-            clubs[text] = {"players": []}
-            user_state[user_id] = "club_leader"
-            await update.message.reply_text("أرسل ID رئيس النادي")
+    # بيانات اللاعب
+    if state == "p_name":
+        context.user_data["pn"] = text
+        context.user_data["s"] = "p_fb"
+        return await update.message.reply_text("فيس:")
 
-        elif state == "club_leader":
-            try:
-                clubs[context.user_data["club"]]["leader"] = int(text)
-                user_state[user_id] = "club_fb"
-                await update.message.reply_text("أرسل رابط فيسبوك")
-            except:
-                await update.message.reply_text("❌ ID غلط")
+    if state == "p_fb":
+        if not is_fb(text):
+            return await update.message.reply_text("❌ رابط غلط")
 
-        elif state == "club_fb":
-            if "facebook.com" not in text:
-                await update.message.reply_text("❌ رابط غير صحيح")
-                return
-            clubs[context.user_data["club"]]["fb"] = text
-            await update.message.reply_text("✅ تم إضافة النادي")
-            user_state.pop(user_id)
+        context.user_data["pf"] = text
+        context.user_data["s"] = "p_serial"
+        return await update.message.reply_text("Serial:")
 
-        # بحث لاعب
-        elif state == "search":
-            found = False
-            for p in players.values():
-                if text in p["name"] or text in p["fb"]:
-                    msg = f"""
-👤 {p['name']}
-🔗 {p['fb']}
-📱 {p['phone']}
-"""
-                    await update.message.reply_text(msg)
-                    found = True
-            if not found:
-                await update.message.reply_text("❌ ماكو لاعب")
-            user_state.pop(user_id)
+    if state == "p_serial":
+        # منع التكرار
+        for c in clubs:
+            for p in clubs[c]["players"]:
+                if p["serial"] == text or p["fb"] == context.user_data["pf"]:
+                    return await update.message.reply_text("❌ لاعب مكرر")
 
-# ================== تشغيل ==================
+        # إرسال طلب
+        requests.append({
+            "name": context.user_data["pn"],
+            "fb": context.user_data["pf"],
+            "serial": text,
+            "club": context.user_data["club"]
+        })
+
+        context.user_data.clear()
+        return await update.message.reply_text("📥 تم إرسال الطلب")
+
+    # ================= الطلبات =================
+    if text == "📥 الطلبات" and uid in leaders:
+        if not requests:
+            return await update.message.reply_text("❌ ماكو طلبات")
+
+        for i, r in enumerate(requests):
+            await update.message.reply_text(
+                f"{i}\n{r['name']} - {r['club']}"
+            )
+        context.user_data["s"] = "review"
+
+    if state == "review":
+        try:
+            idx = int(text)
+            r = requests[idx]
+        except:
+            return await update.message.reply_text("❌ رقم غلط")
+
+        clubs[r["club"]]["players"].append(r)
+        requests.pop(idx)
+
+        context.user_data.clear()
+        return await update.message.reply_text("✅ تمت الموافقة")
+
+    # ================= البحث =================
+    if text == "🔍 بحث لاعب":
+        context.user_data["s"] = "search"
+        return await update.message.reply_text("اكتب الاسم او الفيس")
+
+    if state == "search":
+        c, p = find_player(text)
+        context.user_data.clear()
+
+        if not p:
+            return await update.message.reply_text("❌ ماكو")
+
+        return await update.message.reply_text(
+            f"👤 {p['name']}\n🏟 {c}\n🔗 {p['fb']}\n📱 {p['serial']}"
+        )
+
+# ================= RUN =================
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handler))
-
-    print("Bot running...")
     app.run_polling()
 
 if __name__ == "__main__":
