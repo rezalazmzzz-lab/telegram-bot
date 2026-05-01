@@ -5,21 +5,22 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 TOKEN = os.getenv("BOT_TOKEN")
 OWNER_ID = 653170487
 
+# ===== DB =====
 db = sqlite3.connect("bot.db", check_same_thread=False)
 cur = db.cursor()
 
-# ===== TABLES =====
 cur.execute("CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY)")
 cur.execute("CREATE TABLE IF NOT EXISTS leaders(id INTEGER)")
-cur.execute("CREATE TABLE IF NOT EXISTS clubs(name TEXT, president INTEGER, pres_name TEXT, fb TEXT)")
-cur.execute("CREATE TABLE IF NOT EXISTS players(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, fb TEXT, club TEXT, photo TEXT)")
-cur.execute("CREATE TABLE IF NOT EXISTS requests(id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, data TEXT)")
+cur.execute("CREATE TABLE IF NOT EXISTS clubs(name TEXT, president INTEGER, pres_name TEXT)")
+cur.execute("CREATE TABLE IF NOT EXISTS players(name TEXT, fb TEXT, serial TEXT, screen TEXT, club TEXT)")
+cur.execute("CREATE TABLE IF NOT EXISTS requests(id INTEGER PRIMARY KEY, type TEXT, data TEXT)")
 cur.execute("CREATE TABLE IF NOT EXISTS settings(key TEXT, val TEXT)")
 db.commit()
 
 # ===== HELPERS =====
 def is_leader(uid):
-    if uid == OWNER_ID: return True
+    if uid == OWNER_ID:
+        return True
     return cur.execute("SELECT 1 FROM leaders WHERE id=?", (uid,)).fetchone()
 
 def transfer_open():
@@ -28,7 +29,7 @@ def transfer_open():
 
 def set_transfer(v):
     cur.execute("DELETE FROM settings WHERE key='t'")
-    cur.execute("INSERT INTO settings VALUES('t',?)",(v,))
+    cur.execute("INSERT INTO settings VALUES('t',?)", (v,))
     db.commit()
 
 async def valid_user(app, uid):
@@ -38,14 +39,18 @@ async def valid_user(app, uid):
     except:
         return False
 
+def get_user_club(uid):
+    r = cur.execute("SELECT name FROM clubs WHERE president=?", (uid,)).fetchone()
+    return r[0] if r else None
+
 def menu(uid):
-    m=[["🔍 بحث لاعب"]]
+    m = [["🔍 بحث لاعب"]]
 
     if uid == OWNER_ID:
-        m += [["👑 القادة"],["📥 الطلبات"],["⚙️ الانتقالات"]]
+        m += [["👑 القادة"], ["📥 الطلبات"], ["⚙️ الانتقالات"]]
 
     elif is_leader(uid):
-        m += [["🏟 الأندية"],["📥 الطلبات"]]
+        m += [["🏟 إدارة الأندية"], ["📥 الطلبات"]]
 
     else:
         m += [["📋 عرض الأندية"]]
@@ -55,152 +60,151 @@ def menu(uid):
 # ===== START =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    cur.execute("INSERT OR IGNORE INTO users VALUES(?)",(uid,))
+    cur.execute("INSERT OR IGNORE INTO users VALUES(?)", (uid,))
     db.commit()
-    await update.message.reply_text("🔥 البوت جاهز", reply_markup=menu(uid))
+    await update.message.reply_text("🔥 تم تشغيل البوت", reply_markup=menu(uid))
 
 # ===== HANDLE =====
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    t = update.message.text
+    text = update.message.text
     s = context.user_data.get("s")
 
-    # رجوع
-    if t=="🔙":
+    # ===== القادة =====
+    if text == "👑 القادة" and uid == OWNER_ID:
+        kb = [["➕ قائد"], ["🔙"]]
+        return await update.message.reply_text("👑", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+
+    if text == "➕ قائد":
+        context.user_data["s"] = "addL"
+        return await update.message.reply_text("ارسل ID")
+
+    if s == "addL":
+        if not text.isdigit():
+            return await update.message.reply_text("❌ ID خطأ")
+
+        uid2 = int(text)
+
+        if not await valid_user(context.application, uid2):
+            return await update.message.reply_text("❌ خليه يسوي /start")
+
+        cur.execute("INSERT INTO leaders VALUES(?)", (uid2,))
+        db.commit()
         context.user_data.clear()
-        return await update.message.reply_text("رجوع", reply_markup=menu(uid))
+        return await update.message.reply_text("✅ تم إضافة قائد")
 
-    # ===== إضافة قائد =====
-    if t=="➕ قائد":
-        context.user_data["s"]="addL"
-        return await update.message.reply_text("ID")
+    # ===== الأندية =====
+    if text == "🏟 إدارة الأندية" and is_leader(uid):
+        kb = [["➕ نادي", "📋 عرض"], ["🔙"]]
+        return await update.message.reply_text("🏟", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
-    if s=="addL":
-        if not t.isdigit(): return await update.message.reply_text("❌")
-        if not await valid_user(context.application,int(t)):
-            return await update.message.reply_text("❌ لازم start")
+    if text == "➕ نادي":
+        context.user_data["s"] = "pn"
+        return await update.message.reply_text("اسم رئيس النادي")
 
-        cur.execute("INSERT INTO leaders VALUES(?)",(int(t),))
-        db.commit(); context.user_data.clear()
-        return await update.message.reply_text("✅ تم")
+    if s == "pn":
+        context.user_data["pn"] = text
+        context.user_data["s"] = "pid"
+        return await update.message.reply_text("ID الرئيس")
 
-    # ===== إضافة نادي =====
-    if t=="➕ نادي":
-        context.user_data["s"]="pn"
-        return await update.message.reply_text("اسم الرئيس")
+    if s == "pid":
+        if not text.isdigit():
+            return await update.message.reply_text("❌ ID غلط")
 
-    if s=="pn":
-        context.user_data["pn"]=t; context.user_data["s"]="pid"
-        return await update.message.reply_text("ID")
+        uid2 = int(text)
 
-    if s=="pid":
-        if not t.isdigit(): return await update.message.reply_text("❌")
-        if not await valid_user(context.application,int(t)):
-            return await update.message.reply_text("❌ لازم start")
+        if not await valid_user(context.application, uid2):
+            return await update.message.reply_text("❌ لازم يسوي start")
 
-        context.user_data["pid"]=int(t); context.user_data["s"]="cn"
+        context.user_data["pid"] = uid2
+        context.user_data["s"] = "cn"
         return await update.message.reply_text("اسم النادي")
 
-    if s=="cn":
-        cur.execute("INSERT INTO clubs VALUES(?,?,?,?)",
-                    (t,context.user_data["pid"],context.user_data["pn"],"fb"))
-        cur.execute("INSERT INTO leaders VALUES(?)",(context.user_data["pid"],))
-        db.commit(); context.user_data.clear()
-        return await update.message.reply_text("✅ تم")
+    if s == "cn":
+        cur.execute("INSERT INTO clubs VALUES(?,?,?)",
+                    (text, context.user_data["pid"], context.user_data["pn"]))
+
+        cur.execute("INSERT INTO leaders VALUES(?)", (context.user_data["pid"],))
+        db.commit()
+
+        context.user_data.clear()
+        return await update.message.reply_text("✅ تم إنشاء النادي")
 
     # ===== عرض الأندية =====
-    if t=="📋 عرض الأندية":
-        clubs=cur.execute("SELECT * FROM clubs").fetchall()
-        if not clubs: return await update.message.reply_text("❌")
+    if text == "📋 عرض الأندية" or text == "📋 عرض":
+        clubs = cur.execute("SELECT * FROM clubs").fetchall()
+
+        if not clubs:
+            return await update.message.reply_text("❌ ماكو أندية")
 
         for c in clubs:
-            count = cur.execute("SELECT COUNT(*) FROM players WHERE club=?",(c[0],)).fetchone()[0]
-            await update.message.reply_text(f"{c[0]}\n👤 {c[2]}\n👥 {count} لاعب")
+            kb = [[f"👥 {c[0]}"], ["🚫 اعتراض"]]
+            await update.message.reply_text(
+                f"🏟 {c[0]}\n👤 {c[2]}",
+                reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
+            )
+        return
 
-    # ===== إضافة لاعب (صورة حقيقية) =====
-    if t=="➕ لاعب":
-        if not transfer_open():
-            return await update.message.reply_text("❌ الانتقالات مغلقة")
+    # ===== عرض لاعبين =====
+    if text.startswith("👥"):
+        club = text.replace("👥 ", "")
+        ps = cur.execute("SELECT * FROM players WHERE club=?", (club,)).fetchall()
 
-        context.user_data["s"]="pname"
-        return await update.message.reply_text("اسم اللاعب")
+        if not ps:
+            return await update.message.reply_text("❌ ماكو لاعبين")
 
-    if s=="pname":
-        context.user_data["name"]=t
-        context.user_data["s"]="pfb"
-        return await update.message.reply_text("رابط الفيس")
+        msg = ""
+        for p in ps:
+            msg += f"{p[0]}\n{p[1]}\n{p[2]}\n\n"
 
-    if s=="pfb":
-        context.user_data["fb"]=t
-        context.user_data["s"]="photo"
-        return await update.message.reply_text("ارسل صورة اللاعب")
+        return await update.message.reply_text(msg)
 
-    if s=="photo" and update.message.photo:
-        file = update.message.photo[-1].file_id
+    # ===== اعتراض =====
+    if text == "🚫 اعتراض":
+        context.user_data["s"] = "comp"
+        return await update.message.reply_text("اكتب الاعتراض")
 
-        club = cur.execute("SELECT name FROM clubs WHERE president=?",(uid,)).fetchone()
-        if not club:
-            return await update.message.reply_text("❌ مو رئيس نادي")
-
-        cur.execute("INSERT INTO players(name,fb,club,photo) VALUES(?,?,?,?)",
-                    (context.user_data["name"],context.user_data["fb"],club[0],file))
-        db.commit()
-
-        # 🔔 إشعار
-        await context.bot.send_message(OWNER_ID, f"تم إضافة لاعب {context.user_data['name']}")
-
-        context.user_data.clear()
-        return await update.message.reply_text("✅ تم إضافة اللاعب")
-
-    # ===== حذف لاعب =====
-    if t=="❌ حذف لاعب":
-        context.user_data["s"]="del"
-        return await update.message.reply_text("اسم اللاعب")
-
-    if s=="del":
-        cur.execute("DELETE FROM players WHERE name=?",(t,))
+    if s == "comp":
+        cur.execute("INSERT INTO requests(type,data) VALUES('complaint',?)", (text,))
         db.commit()
         context.user_data.clear()
-        return await update.message.reply_text("✅ تم الحذف")
+        return await update.message.reply_text("📥 تم إرسال الاعتراض")
 
-    # ===== تعديل لاعب =====
-    if t=="✏️ تعديل لاعب":
-        context.user_data["s"]="edit"
-        return await update.message.reply_text("اسم اللاعب")
+    # ===== الطلبات =====
+    if text == "📥 الطلبات" and is_leader(uid):
+        rs = cur.execute("SELECT * FROM requests").fetchall()
 
-    if s=="edit":
-        context.user_data["old"]=t
-        context.user_data["s"]="new"
-        return await update.message.reply_text("الاسم الجديد")
+        if not rs:
+            return await update.message.reply_text("❌ ماكو طلبات")
 
-    if s=="new":
-        cur.execute("UPDATE players SET name=? WHERE name=?",(t,context.user_data["old"]))
+        msg = ""
+        for r in rs:
+            msg += f"{r[0]} - {r[2]}\n"
+
+        context.user_data["s"] = "app"
+        return await update.message.reply_text(msg + "\nارسل رقم الطلب")
+
+    if s == "app":
+        context.user_data["rid"] = int(text)
+        context.user_data["s"] = "dec"
+        return await update.message.reply_text("✅ موافقة / ❌ رفض")
+
+    if s == "dec":
+        cur.execute("DELETE FROM requests WHERE id=?", (context.user_data["rid"],))
         db.commit()
         context.user_data.clear()
-        return await update.message.reply_text("✅ تم التعديل")
-
-    # ===== البحث =====
-    if t=="🔍 بحث لاعب":
-        context.user_data["s"]="search"
-        return await update.message.reply_text("اكتب الاسم")
-
-    if s=="search":
-        p=cur.execute("SELECT * FROM players WHERE name LIKE ?",('%'+t+'%',)).fetchone()
-        if not p: return await update.message.reply_text("❌")
-
-        await update.message.reply_photo(p[4],caption=f"{p[1]}\n{p[2]}\n{p[3]}")
-        context.user_data.clear()
+        return await update.message.reply_text("تم التنفيذ")
 
     # ===== الانتقالات =====
-    if t=="⚙️ الانتقالات":
-        kb=[["🟢 فتح","🔴 غلق"]]
-        return await update.message.reply_text("⚙️",reply_markup=ReplyKeyboardMarkup(kb,resize_keyboard=True))
+    if text == "⚙️ الانتقالات" and uid == OWNER_ID:
+        kb = [["🟢 فتح", "🔴 غلق"]]
+        return await update.message.reply_text("⚙️", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
-    if t=="🟢 فتح":
+    if text == "🟢 فتح":
         set_transfer("1")
         return await update.message.reply_text("🟢 مفتوحة")
 
-    if t=="🔴 غلق":
+    if text == "🔴 غلق":
         set_transfer("0")
         return await update.message.reply_text("🔴 مغلقة")
 
@@ -208,8 +212,8 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.ALL, handle))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
     app.run_polling()
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
