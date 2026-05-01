@@ -31,8 +31,22 @@ def set_transfer(v):
     cur.execute("INSERT INTO settings VALUES('t',?)",(v,))
     db.commit()
 
+async def valid_user(app, uid):
+    try:
+        await app.bot.get_chat(uid)
+        return True
+    except:
+        return False
+
+def valid_fb(x):
+    return x.startswith("https://www.facebook.com/")
+
+def get_user_club(uid):
+    r = cur.execute("SELECT name FROM clubs WHERE president=?", (uid,)).fetchone()
+    return r[0] if r else None
+
 def menu(uid):
-    m=[["🔍 بحث لاعب"]]
+    m = [["🔍 بحث لاعب"]]
 
     if uid == OWNER_ID:
         m += [["👑 القادة"],["📥 الطلبات"],["⚙️ الانتقالات"]]
@@ -44,16 +58,6 @@ def menu(uid):
         m += [["📋 عرض الأندية"]]
 
     return ReplyKeyboardMarkup(m, resize_keyboard=True)
-
-async def valid_user(app, uid):
-    try:
-        await app.bot.get_chat(uid)
-        return True
-    except:
-        return False
-
-def valid_fb(x):
-    return x.startswith("https://www.facebook.com/")
 
 # ===== START =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -69,119 +73,153 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     s = context.user_data.get("s")
 
     # رجوع
-    if t=="🔙":
+    if t == "🔙":
         context.user_data.clear()
         return await update.message.reply_text("رجوع", reply_markup=menu(uid))
 
     # ===== القادة =====
-    if t=="👑 القادة" and uid==OWNER_ID:
+    if t == "👑 القادة" and uid == OWNER_ID:
         kb=[["➕ قائد","➖ قائد"],["🔙"]]
-        return await update.message.reply_text("👑", reply_markup=ReplyKeyboardMarkup(kb,resize_keyboard=True))
+        return await update.message.reply_text("👑 إدارة القادة", reply_markup=ReplyKeyboardMarkup(kb,resize_keyboard=True))
 
-    if t=="➕ قائد":
+    if t == "➕ قائد":
         context.user_data["s"]="addL"
-        return await update.message.reply_text("ID:")
+        return await update.message.reply_text("ارسل ID:")
 
-    if s=="addL":
-        if not t.isdigit(): return await update.message.reply_text("❌")
-        if not await valid_user(context.application,int(t)):
-            return await update.message.reply_text("❌ خليه يسوي start")
+    if s == "addL":
+        if not t.isdigit():
+            return await update.message.reply_text("❌ ID غلط")
+
+        if not await valid_user(context.application, int(t)):
+            return await update.message.reply_text("❌ خليه يسوي /start")
 
         cur.execute("INSERT INTO leaders VALUES(?)",(int(t),))
-        db.commit(); context.user_data.clear()
-        return await update.message.reply_text("✅")
+        db.commit()
+        context.user_data.clear()
+        return await update.message.reply_text("✅ تم إضافة قائد")
+
+    if t == "➖ قائد":
+        context.user_data["s"]="delL"
+        return await update.message.reply_text("ارسل ID:")
+
+    if s == "delL":
+        cur.execute("DELETE FROM leaders WHERE id=?", (int(t),))
+        db.commit()
+        context.user_data.clear()
+        return await update.message.reply_text("✅ تم الحذف")
 
     # ===== الأندية =====
-    if t=="🏟 الأندية" and is_leader(uid):
-        kb=[["➕ نادي","📋 عرض"],["🔙"]]
-        return await update.message.reply_text("🏟",reply_markup=ReplyKeyboardMarkup(kb,resize_keyboard=True))
+    if t == "🏟 الأندية" and is_leader(uid):
+        kb=[["➕ نادي","📋 عرض الأندية"],["🔙"]]
+        return await update.message.reply_text("🏟 إدارة الأندية",reply_markup=ReplyKeyboardMarkup(kb,resize_keyboard=True))
 
-    if t=="➕ نادي":
+    if t == "➕ نادي":
         context.user_data["s"]="pn"
-        return await update.message.reply_text("اسم الرئيس")
+        return await update.message.reply_text("اسم رئيس النادي:")
 
-    if s=="pn":
-        context.user_data["pn"]=t; context.user_data["s"]="pf"
-        return await update.message.reply_text("فيس")
+    if s == "pn":
+        context.user_data["pn"]=t
+        context.user_data["s"]="pf"
+        return await update.message.reply_text("رابط الفيس:")
 
-    if s=="pf":
-        if not valid_fb(t): return await update.message.reply_text("❌")
-        context.user_data["pf"]=t; context.user_data["s"]="pid"
-        return await update.message.reply_text("ID")
+    if s == "pf":
+        if not valid_fb(t):
+            return await update.message.reply_text("❌ رابط فيس غير صحيح")
 
-    if s=="pid":
-        if not t.isdigit(): return await update.message.reply_text("❌")
+        context.user_data["pf"]=t
+        context.user_data["s"]="pid"
+        return await update.message.reply_text("ID رئيس النادي:")
+
+    if s == "pid":
+        if not t.isdigit():
+            return await update.message.reply_text("❌ ID غلط")
+
         if not await valid_user(context.application,int(t)):
-            return await update.message.reply_text("❌ لازم start")
+            return await update.message.reply_text("❌ خليه يسوي /start")
 
-        context.user_data["pid"]=int(t); context.user_data["s"]="cn"
-        return await update.message.reply_text("اسم النادي")
+        context.user_data["pid"]=int(t)
+        context.user_data["s"]="cn"
+        return await update.message.reply_text("اسم النادي:")
 
-    if s=="cn":
+    if s == "cn":
         cur.execute("INSERT INTO clubs VALUES(?,?,?,?)",
                     (t,context.user_data["pid"],context.user_data["pn"],context.user_data["pf"]))
         cur.execute("INSERT INTO leaders VALUES(?)",(context.user_data["pid"],))
-        db.commit(); context.user_data.clear()
-        return await update.message.reply_text("✅ تم")
+        db.commit()
+        context.user_data.clear()
+        return await update.message.reply_text("✅ تم إنشاء النادي")
 
     # ===== عرض الأندية =====
-    if t=="📋 عرض الأندية" or t=="📋 عرض":
-        clubs=cur.execute("SELECT * FROM clubs").fetchall()
-        if not clubs: return await update.message.reply_text("❌")
+    if t == "📋 عرض الأندية":
+        clubs = cur.execute("SELECT * FROM clubs").fetchall()
+        if not clubs:
+            return await update.message.reply_text("❌ ماكو أندية")
 
         for c in clubs:
-            kb=[[f"👥 {c[0]}"],["🚫 اعتراض"],["🔙"]]
-            await update.message.reply_text(f"{c[0]}\n{c[2]}",reply_markup=ReplyKeyboardMarkup(kb,resize_keyboard=True))
+            kb = [[f"👥 {c[0]}"],["🚫 اعتراض"],["🔙"]]
+            await update.message.reply_text(f"🏟 {c[0]}\n👤 {c[2]}",reply_markup=ReplyKeyboardMarkup(kb,resize_keyboard=True))
         return
 
     if t.startswith("👥"):
-        c=t.replace("👥 ","")
-        ps=cur.execute("SELECT * FROM players WHERE club=?",(c,)).fetchall()
-        if not ps: return await update.message.reply_text("❌")
+        club = t.replace("👥 ","")
+        ps = cur.execute("SELECT * FROM players WHERE club=?", (club,)).fetchall()
+
+        if not ps:
+            return await update.message.reply_text("❌ ماكو لاعبين")
 
         msg=""
         for p in ps:
-            msg+=f"{p[0]}\n{p[1]}\n{p[2]}\n\n"
+            msg += f"{p[0]}\n{p[1]}\n{p[2]}\n\n"
+
         return await update.message.reply_text(msg)
 
     # ===== اعتراض =====
-    if t=="🚫 اعتراض":
+    if t == "🚫 اعتراض":
         context.user_data["s"]="comp"
-        return await update.message.reply_text("اكتب الاعتراض")
+        return await update.message.reply_text("اكتب الاعتراض:")
 
-    if s=="comp":
-        cur.execute("INSERT INTO requests(type,data) VALUES('comp',?)",(t,))
-        db.commit(); context.user_data.clear()
-        return await update.message.reply_text("📥 تم")
+    if s == "comp":
+        cur.execute("INSERT INTO requests(type,data) VALUES('complaint',?)",(t,))
+        db.commit()
+        context.user_data.clear()
+        return await update.message.reply_text("📥 تم إرسال الاعتراض")
 
     # ===== الطلبات =====
-    if t=="📥 الطلبات" and is_leader(uid):
-        rs=cur.execute("SELECT * FROM requests").fetchall()
-        if not rs: return await update.message.reply_text("❌")
+    if t == "📥 الطلبات" and is_leader(uid):
+        rs = cur.execute("SELECT * FROM requests").fetchall()
+        if not rs:
+            return await update.message.reply_text("❌ ماكو طلبات")
 
         msg=""
         for r in rs:
-            msg+=f"{r[0]} - {r[1]} - {r[2]}\n"
-        context.user_data["s"]="app"
-        return await update.message.reply_text(msg+"اختر رقم")
+            msg += f"{r[0]} - {r[2]}\n"
 
-    if s=="app":
+        context.user_data["s"]="app"
+        return await update.message.reply_text(msg+"ارسل رقم الطلب")
+
+    if s == "app":
         context.user_data["rid"]=int(t)
         context.user_data["s"]="dec"
-        return await update.message.reply_text("✅ او ❌")
+        return await update.message.reply_text("✅ موافقة او ❌ رفض")
 
-    if s=="dec":
-        cur.execute("DELETE FROM requests WHERE id=?",(context.user_data["rid"],))
-        db.commit(); context.user_data.clear()
-        return await update.message.reply_text("تم")
+    if s == "dec":
+        cur.execute("DELETE FROM requests WHERE id=?", (context.user_data["rid"],))
+        db.commit()
+        context.user_data.clear()
+        return await update.message.reply_text("✅ تم")
 
     # ===== الانتقالات =====
-    if t=="⚙️ الانتقالات" and uid==OWNER_ID:
-        kb=[["🟢 فتح","🔴 غلق"]]
-        return await update.message.reply_text("⚙️",reply_markup=ReplyKeyboardMarkup(kb,resize_keyboard=True))
+    if t == "⚙️ الانتقالات" and uid == OWNER_ID:
+        kb=[["🟢 فتح","🔴 غلق"],["🔙"]]
+        return await update.message.reply_text("⚙️ التحكم بالانتقالات",reply_markup=ReplyKeyboardMarkup(kb,resize_keyboard=True))
 
-    if t=="🟢 فتح": set_transfer("1"); return await update.message.reply_text("🟢")
-    if t=="🔴 غلق": set_transfer("0"); return await update.message.reply_text("🔴")
+    if t == "🟢 فتح":
+        set_transfer("1")
+        return await update.message.reply_text("🟢 تم فتح الانتقالات")
+
+    if t == "🔴 غلق":
+        set_transfer("0")
+        return await update.message.reply_text("🔴 تم غلق الانتقالات")
 
 # ===== RUN =====
 def main():
@@ -190,5 +228,5 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
     app.run_polling()
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
