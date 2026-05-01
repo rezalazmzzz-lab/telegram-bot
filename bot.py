@@ -2,7 +2,9 @@ import os
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
+# ✅ التوكن من Railway
 TOKEN = os.getenv("BOT_TOKEN")
+
 OWNER_ID = 653170487
 
 leaders = set([OWNER_ID])
@@ -10,7 +12,7 @@ clubs = {}
 requests = []
 transfer_open = False
 
-# ---------------- MENUS ----------------
+# ---------- MENUS ----------
 def main_menu():
     return ReplyKeyboardMarkup([
         ["👑 إدارة القادة", "🏟 إدارة الأندية"],
@@ -30,7 +32,7 @@ def clubs_menu():
         ["🔙 رجوع"]
     ], resize_keyboard=True)
 
-# ---------------- VALIDATION ----------------
+# ---------- HELPERS ----------
 async def valid_user(app, uid):
     try:
         await app.bot.get_chat(uid)
@@ -41,11 +43,17 @@ async def valid_user(app, uid):
 def valid_fb(link):
     return link.startswith("https://www.facebook.com/")
 
-# ---------------- START ----------------
+def get_user_club(uid):
+    for c in clubs:
+        if clubs[c]["president"] == uid:
+            return c
+    return None
+
+# ---------- START ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔥 البوت شغال", reply_markup=main_menu())
 
-# ---------------- HANDLER ----------------
+# ---------- HANDLER ----------
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global transfer_open
 
@@ -58,7 +66,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         return await update.message.reply_text("رجعنا", reply_markup=main_menu())
 
-    # ========= القادة =========
+    # ===== القادة =====
     if text == "👑 إدارة القادة":
         if uid != OWNER_ID:
             return await update.message.reply_text("❌ فقط المالك")
@@ -91,7 +99,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ مو موجود")
         context.user_data.clear()
 
-    # ========= الأندية =========
+    # ===== الأندية =====
     if text == "🏟 إدارة الأندية":
         if uid not in leaders:
             return await update.message.reply_text("❌ ما عندك صلاحية")
@@ -105,45 +113,50 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         transfer_open = False
         return await update.message.reply_text("🔴 مغلقة")
 
+    # إضافة نادي
     if text == "➕ إضافة نادي":
-        context.user_data["state"] = "owner_name"
+        context.user_data["state"] = "pres_name"
         return await update.message.reply_text("اسم رئيس النادي:")
 
-    if state == "owner_name":
-        context.user_data["owner_name"] = text
-        context.user_data["state"] = "owner_fb"
+    if state == "pres_name":
+        context.user_data["pres_name"] = text
+        context.user_data["state"] = "pres_fb"
         return await update.message.reply_text("رابط الفيس:")
 
-    if state == "owner_fb":
+    if state == "pres_fb":
         if not valid_fb(text):
             return await update.message.reply_text("❌ رابط غلط")
 
-        context.user_data["owner_fb"] = text
-        context.user_data["state"] = "owner_id"
+        context.user_data["pres_fb"] = text
+        context.user_data["state"] = "pres_id"
         return await update.message.reply_text("ID التلكرام:")
 
-    if state == "owner_id":
+    if state == "pres_id":
         if not text.isdigit():
             return await update.message.reply_text("❌ ID غلط")
 
         if not await valid_user(context.application, int(text)):
             return await update.message.reply_text("❌ خليه يسوي /start")
 
-        context.user_data["owner_id"] = int(text)
+        context.user_data["pres_id"] = int(text)
         context.user_data["state"] = "club_name"
         return await update.message.reply_text("اسم النادي:")
 
     if state == "club_name":
         clubs[text] = {
-            "owner_id": context.user_data["owner_id"],
-            "owner_name": context.user_data["owner_name"],
-            "fb": context.user_data["owner_fb"],
+            "president": context.user_data["pres_id"],
+            "pres_name": context.user_data["pres_name"],
+            "fb": context.user_data["pres_fb"],
             "players": []
         }
-        context.user_data.clear()
-        return await update.message.reply_text("✅ تم إنشاء النادي")
 
-    # عرض الأندية كأزرار
+        # 🔥 إعطاء صلاحية للرئيس
+        leaders.add(context.user_data["pres_id"])
+
+        context.user_data.clear()
+        return await update.message.reply_text("✅ تم إنشاء النادي وإعطاء الصلاحيات")
+
+    # عرض الأندية
     if text == "📋 عرض الأندية":
         if not clubs:
             return await update.message.reply_text("❌ ماكو أندية")
@@ -157,72 +170,60 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardMarkup(keyboard + [["🔙 رجوع"]], resize_keyboard=True)
         )
 
-    # عرض لاعبين نادي
+    # عرض لاعبين
     if text.startswith("👥 عرض لاعبين"):
-        club_name = text.replace("👥 عرض لاعبين ", "")
+        club = text.replace("👥 عرض لاعبين ", "")
 
-        if club_name not in clubs:
-            return await update.message.reply_text("❌ النادي غير موجود")
-
-        players = clubs[club_name]["players"]
+        players = clubs[club]["players"]
 
         if not players:
             return await update.message.reply_text("❌ ماكو لاعبين")
 
-        msg = f"🏟 {club_name}\n👥 اللاعبين:\n"
+        msg = f"🏟 {club}\n"
 
         for p in players:
-            msg += (
-                f"\n🔹 رقم: {p['id']}"
-                f"\n👤 {p['name']}"
-                f"\n🔗 {p['fb']}"
-                f"\n📸 {p['screen']}\n"
-                "----------------"
-            )
+            msg += f"\n🔹 {p['id']} | {p['name']}\n🔗 {p['fb']}\n📸 {p['screen']}\n"
 
         return await update.message.reply_text(msg)
 
-    # ========= إضافة لاعب (طلب) =========
+    # ===== إضافة لاعب (طلب) =====
     if text == "➕ إضافة لاعب":
         if not transfer_open:
-            return await update.message.reply_text("❌ مغلقة")
+            return await update.message.reply_text("❌ الانتقالات مغلقة")
 
-        context.user_data["state"] = "choose_club"
-        return await update.message.reply_text("اسم النادي:")
+        club = get_user_club(uid)
+        if not club:
+            return await update.message.reply_text("❌ انت مو رئيس نادي")
 
-    if state == "choose_club":
-        if text not in clubs:
-            return await update.message.reply_text("❌ نادي غير موجود")
-
-        context.user_data["club"] = text
+        context.user_data["club"] = club
         context.user_data["state"] = "p_name"
         return await update.message.reply_text("اسم اللاعب:")
 
     if state == "p_name":
-        context.user_data["pname"] = text
+        context.user_data["name"] = text
         context.user_data["state"] = "p_fb"
-        return await update.message.reply_text("فيس:")
+        return await update.message.reply_text("رابط الفيس:")
 
     if state == "p_fb":
         if not valid_fb(text):
             return await update.message.reply_text("❌ رابط غلط")
 
-        context.user_data["pfb"] = text
+        context.user_data["fb"] = text
         context.user_data["state"] = "p_screen"
         return await update.message.reply_text("رابط السكرين:")
 
     if state == "p_screen":
         requests.append({
-            "name": context.user_data["pname"],
-            "fb": context.user_data["pfb"],
-            "screen": text,
-            "club": context.user_data["club"]
+            "club": context.user_data["club"],
+            "name": context.user_data["name"],
+            "fb": context.user_data["fb"],
+            "screen": text
         })
 
         context.user_data.clear()
         return await update.message.reply_text("📥 تم إرسال الطلب")
 
-    # ========= الطلبات =========
+    # ===== الطلبات =====
     if text == "📥 الطلبات":
         if uid not in leaders:
             return await update.message.reply_text("❌ فقط القادة")
@@ -230,51 +231,39 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not requests:
             return await update.message.reply_text("❌ ماكو طلبات")
 
-        msg = "📥 الطلبات:\n"
+        msg = ""
         for i, r in enumerate(requests):
-            msg += f"\n{i} - {r['name']} ({r['club']})"
+            msg += f"{i} - {r['name']} ({r['club']})\n"
 
         context.user_data["state"] = "approve"
         return await update.message.reply_text(msg + "\nارسل رقم الطلب")
 
     if state == "approve":
-        try:
-            i = int(text)
-            r = requests[i]
-        except:
-            return await update.message.reply_text("❌ رقم غلط")
-
-        context.user_data["req_id"] = i
+        i = int(text)
+        context.user_data["req"] = i
         context.user_data["state"] = "decision"
-        return await update.message.reply_text("اكتب:\n✅ موافقة\n❌ رفض")
+        return await update.message.reply_text("✅ موافقة او ❌ رفض")
 
     if state == "decision":
-        i = context.user_data["req_id"]
-        r = requests[i]
+        r = requests[context.user_data["req"]]
 
-        if text == "✅ موافقة":
-            club = r["club"]
-            players = clubs[club]["players"]
-
+        if "موافقة" in text:
+            players = clubs[r["club"]]["players"]
             players.append({
-                "id": len(players) + 1,
+                "id": len(players)+1,
                 "name": r["name"],
                 "fb": r["fb"],
                 "screen": r["screen"]
             })
-
             await update.message.reply_text("✅ تمت الموافقة")
 
-        elif text == "❌ رفض":
+        else:
             await update.message.reply_text("❌ تم الرفض")
 
-        else:
-            return await update.message.reply_text("❌ اكتب صح")
-
-        requests.pop(i)
+        requests.pop(context.user_data["req"])
         context.user_data.clear()
 
-    # ========= البحث =========
+    # ===== البحث =====
     if text == "🔍 بحث لاعب":
         context.user_data["state"] = "search"
         return await update.message.reply_text("اكتب الاسم او الفيس")
@@ -285,12 +274,12 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if text in p["name"] or text in p["fb"]:
                     context.user_data.clear()
                     return await update.message.reply_text(
-                        f"👤 {p['name']}\n🏟 {c}\n🔗 {p['fb']}\n📸 {p['screen']}"
+                        f"{p['name']}\n{c}\n{p['fb']}\n{p['screen']}"
                     )
 
         return await update.message.reply_text("❌ ماكو")
 
-# ---------------- RUN ----------------
+# ---------- RUN ----------
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
