@@ -4,14 +4,14 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 
 TOKEN = os.getenv("BOT_TOKEN")
 
+# ================== DATABASE ==================
 clubs = {}
 players = {}
-leaders = []
+leaders = [653170487]  # 👑 انت القائد الأساسي
 transfer_open = False
 user_state = {}
 
 # ================== KEYBOARDS ==================
-
 main_menu = ReplyKeyboardMarkup([
     ["👑 إدارة القادة", "🏟 إدارة الأندية"],
     ["📨 الطلبات", "🔍 بحث لاعب"]
@@ -29,12 +29,10 @@ clubs_menu = ReplyKeyboardMarkup([
 ], resize_keyboard=True)
 
 # ================== START ==================
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("اهلا بك 👋", reply_markup=main_menu)
+    await update.message.reply_text("اهلا 👋", reply_markup=main_menu)
 
-# ================== HANDLER ==================
-
+# ================== MAIN HANDLER ==================
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global transfer_open
 
@@ -44,10 +42,10 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # رجوع
     if text == "🔙 رجوع":
         user_state.pop(user_id, None)
-        await update.message.reply_text("رجعنا للقائمة الرئيسية", reply_markup=main_menu)
+        await update.message.reply_text("رجعنا", reply_markup=main_menu)
         return
 
-    # إدارة القادة
+    # ================== القادة ==================
     if text == "👑 إدارة القادة":
         if user_id not in leaders:
             await update.message.reply_text("❌ فقط القادة")
@@ -60,17 +58,21 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif text == "➖ حذف قائد":
         user_state[user_id] = "remove_leader"
-        await update.message.reply_text("أرسل ID للحذف")
+        await update.message.reply_text("أرسل ID")
 
     elif text == "🟢 فتح الانتقالات":
+        if user_id not in leaders:
+            return
         transfer_open = True
         await update.message.reply_text("🟢 تم فتح الانتقالات")
 
     elif text == "🔴 غلق الانتقالات":
+        if user_id not in leaders:
+            return
         transfer_open = False
         await update.message.reply_text("🔴 تم غلق الانتقالات")
 
-    # إدارة الأندية
+    # ================== الأندية ==================
     elif text == "🏟 إدارة الأندية":
         await update.message.reply_text("إدارة الأندية:", reply_markup=clubs_menu)
 
@@ -83,20 +85,19 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif text == "📋 عرض الأندية":
         if not clubs:
-            await update.message.reply_text("لا توجد أندية")
+            await update.message.reply_text("لا يوجد أندية")
             return
         msg = ""
         for c in clubs:
             msg += f"🏟 {c}\n"
         await update.message.reply_text(msg)
 
-    # بحث لاعب
+    # ================== بحث لاعب ==================
     elif text == "🔍 بحث لاعب":
         user_state[user_id] = "search"
-        await update.message.reply_text("أرسل اسم اللاعب أو رابط فيسبوك")
+        await update.message.reply_text("أرسل اسم اللاعب أو رابط الفيس")
 
-    # ================== STATES ==================
-
+    # ================== الحالات ==================
     elif user_id in user_state:
 
         state = user_state[user_id]
@@ -104,24 +105,27 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # إضافة قائد
         if state == "add_leader":
             try:
-                leaders.append(int(text))
+                new_id = int(text)
+                if new_id not in leaders:
+                    leaders.append(new_id)
                 await update.message.reply_text("✅ تم إضافة قائد")
             except:
                 await update.message.reply_text("❌ ID غير صالح")
             user_state.pop(user_id)
 
+        # حذف قائد
         elif state == "remove_leader":
             try:
                 leaders.remove(int(text))
-                await update.message.reply_text("✅ تم حذف القائد")
+                await update.message.reply_text("✅ تم الحذف")
             except:
                 await update.message.reply_text("❌ غير موجود")
             user_state.pop(user_id)
 
         # إضافة نادي
         elif state == "club_name":
-            clubs[text] = {"players": []}
             context.user_data["club"] = text
+            clubs[text] = {"players": []}
             user_state[user_id] = "club_leader"
             await update.message.reply_text("أرسل ID رئيس النادي")
 
@@ -129,7 +133,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 clubs[context.user_data["club"]]["leader"] = int(text)
                 user_state[user_id] = "club_fb"
-                await update.message.reply_text("أرسل رابط الفيسبوك")
+                await update.message.reply_text("أرسل رابط فيسبوك")
             except:
                 await update.message.reply_text("❌ ID غلط")
 
@@ -154,11 +158,10 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text(msg)
                     found = True
             if not found:
-                await update.message.reply_text("❌ لم يتم العثور")
+                await update.message.reply_text("❌ ماكو لاعب")
             user_state.pop(user_id)
 
-# ================== MAIN ==================
-
+# ================== تشغيل ==================
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
