@@ -1,242 +1,706 @@
-import os, sqlite3
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+# ==============================
+# IRAQ CLANS UNION BOT
+# FULL PROFESSIONAL VERSION
+# ==============================
+
+import asyncio
+import sqlite3
+import re
+import os
+
+from aiogram import Bot, Dispatcher, F
+from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
+
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton
+)
+
+from aiogram.filters import CommandStart
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+# ==============================
+# BOT INFO
+# ==============================
 
 TOKEN = os.getenv("BOT_TOKEN")
+
 OWNER_ID = 653170487
 
-# ===== DATABASE =====
-db = sqlite3.connect("bot.db", check_same_thread=False)
-cur = db.cursor()
+bot = Bot(
+    token=TOKEN,
+    default=DefaultBotProperties(
+        parse_mode=ParseMode.HTML
+    )
+)
 
-cur.execute("CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY)")
-cur.execute("CREATE TABLE IF NOT EXISTS leaders(id INTEGER UNIQUE)")
-cur.execute("CREATE TABLE IF NOT EXISTS clubs(name TEXT, president INTEGER, pres_name TEXT, fb TEXT)")
-cur.execute("CREATE TABLE IF NOT EXISTS players(name TEXT, fb TEXT, screen TEXT, club TEXT)")
-cur.execute("CREATE TABLE IF NOT EXISTS requests(id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, data TEXT)")
-cur.execute("CREATE TABLE IF NOT EXISTS settings(key TEXT, val TEXT)")
+dp = Dispatcher(storage=MemoryStorage())
+
+# ==============================
+# DATABASE
+# ==============================
+
+db = sqlite3.connect("clans.db")
+cursor = db.cursor()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS players(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    team_name TEXT,
+    player_name TEXT,
+    facebook TEXT,
+    serial TEXT,
+    screenshot TEXT,
+    status TEXT
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS leaders(
+    user_id INTEGER UNIQUE
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS settings(
+    transfers INTEGER
+)
+""")
+
 db.commit()
 
-# ===== HELPERS =====
-def is_leader(uid):
-    if uid == OWNER_ID:
-        return True
-    return cur.execute("SELECT 1 FROM leaders WHERE id=?", (uid,)).fetchone()
+cursor.execute("SELECT * FROM settings")
 
-def transfer_open():
-    r = cur.execute("SELECT val FROM settings WHERE key='t'").fetchone()
-    return r and r[0] == "1"
-
-def set_transfer(v):
-    cur.execute("DELETE FROM settings WHERE key='t'")
-    cur.execute("INSERT INTO settings VALUES('t',?)",(v,))
+if not cursor.fetchone():
+    cursor.execute("""
+    INSERT INTO settings VALUES (0)
+    """)
     db.commit()
 
-def menu(uid):
-    m = [["🔍 بحث لاعب"]]
+# ==============================
+# STATES
+# ==============================
 
-    if uid == OWNER_ID:
-        m += [["👑 إدارة القادة"],["📥 الطلبات"],["⚙️ الانتقالات"]]
+class Register(StatesGroup):
+    team = State()
+    player = State()
+    facebook = State()
+    serial = State()
+    screenshot = State()
 
-    elif is_leader(uid):
-        m += [["🏟 إدارة الأندية"],["📥 الطلبات"]]
+# ==============================
+# FUNCTIONS
+# ==============================
 
-    else:
-        m += [["📋 عرض الأندية"]]
+def is_admin(user_id):
 
-    return ReplyKeyboardMarkup(m, resize_keyboard=True)
-
-async def valid_user(app, uid):
-    try:
-        await app.bot.get_chat(uid)
+    if user_id == OWNER_ID:
         return True
-    except:
-        return False
 
-def valid_fb(link):
-    return link.startswith("https://www.facebook.com/")
+    cursor.execute("""
+    SELECT * FROM leaders
+    WHERE user_id=?
+    """, (user_id,))
 
-# ===== START =====
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    cur.execute("INSERT OR IGNORE INTO users VALUES(?)",(uid,))
+    return cursor.fetchone() is not None
+
+def valid_facebook(link):
+
+    pattern = r"(https?:\/\/)?(www\.)?facebook\.com\/.+"
+
+    return re.match(pattern, link)
+
+# ==============================
+# MENUS
+# ==============================
+
+def admin_menu():
+
+    kb = InlineKeyboardBuilder()
+
+    kb.button(
+        text="الطلبات",
+        callback_data="requests"
+    )
+
+    kb.button(
+        text="عرض التيمات",
+        callback_data="teams"
+    )
+
+    kb.button(
+        text="بحث لاعب",
+        callback_data="search"
+    )
+
+    kb.button(
+        text="فتح الانتقالات",
+        callback_data="open"
+    )
+
+    kb.button(
+        text="غلق الانتقالات",
+        callback_data="close"
+    )
+
+    kb.button(
+        text="إضافة قائد",
+        callback_data="addleader"
+    )
+
+    kb.button(
+        text="حذف قائد",
+        callback_data="removeleader"
+    )
+
+    kb.adjust(2)
+
+    return kb.as_markup()
+
+# ==============================
+# START
+# ==============================
+
+@dp.message(CommandStart())
+async def start(message: Message, state: FSMContext):
+
+    if is_admin(message.from_user.id):
+
+        await message.answer(
+            "لوحة التحكم",
+            reply_markup=admin_menu()
+        )
+
+    text = """
+اهلاً وسهلاً بك في الاتحاد العراقي للكلانات
+
+يرجى ارسال اسم التيم
+"""
+
+    await message.answer(text)
+
+    await state.set_state(Register.team)
+
+# ==============================
+# REGISTER
+# ==============================
+
+@dp.message(Register.team)
+async def get_team(message: Message, state: FSMContext):
+
+    await state.update_data(
+        team=message.text
+    )
+
+    await message.answer(
+        "ارسل اسم اللاعب"
+    )
+
+    await state.set_state(Register.player)
+
+@dp.message(Register.player)
+async def get_player(message: Message, state: FSMContext):
+
+    await state.update_data(
+        player=message.text
+    )
+
+    await message.answer(
+        "ارسل رابط الفيسبوك"
+    )
+
+    await state.set_state(Register.facebook)
+
+@dp.message(Register.facebook)
+async def get_facebook(message: Message, state: FSMContext):
+
+    if not valid_facebook(message.text):
+
+        return await message.answer(
+            "رابط الفيسبوك غير صالح"
+        )
+
+    await state.update_data(
+        facebook=message.text
+    )
+
+    await message.answer(
+        "ارسل الرقم التسلسلي"
+    )
+
+    await state.set_state(Register.serial)
+
+@dp.message(Register.serial)
+async def get_serial(message: Message, state: FSMContext):
+
+    cursor.execute("""
+    SELECT * FROM players
+    WHERE serial=?
+    """, (message.text,))
+
+    if cursor.fetchone():
+
+        return await message.answer(
+            "الرقم مستخدم مسبقاً"
+        )
+
+    await state.update_data(
+        serial=message.text
+    )
+
+    await message.answer(
+        "ارسل صورة السكرين"
+    )
+
+    await state.set_state(Register.screenshot)
+
+@dp.message(Register.screenshot, F.photo)
+async def get_screenshot(message: Message, state: FSMContext):
+
+    data = await state.get_data()
+
+    file_id = message.photo[-1].file_id
+
+    cursor.execute("""
+    INSERT INTO players(
+        user_id,
+        team_name,
+        player_name,
+        facebook,
+        serial,
+        screenshot,
+        status
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        message.from_user.id,
+        data["team"],
+        data["player"],
+        data["facebook"],
+        data["serial"],
+        file_id,
+        "pending"
+    ))
+
     db.commit()
-    await update.message.reply_text("🔥 البوت شغال", reply_markup=menu(uid))
 
-# ===== HANDLE =====
-async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    t = update.message.text
-    s = context.user_data.get("s")
+    text = f"""
+طلب تسجيل جديد
 
-    # رجوع
-    if t == "🔙 رجوع":
-        context.user_data.clear()
-        return await update.message.reply_text("رجعنا", reply_markup=menu(uid))
+التيم: {data['team']}
 
-    # ===== إدارة القادة (فقط المالك) =====
-    if t == "👑 إدارة القادة" and uid == OWNER_ID:
-        kb = [["➕ إضافة قائد","➖ حذف قائد"],["🔙 رجوع"]]
-        return await update.message.reply_text("👑 القادة", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+اللاعب: {data['player']}
 
-    if t == "➕ إضافة قائد":
-        context.user_data["s"] = "addL"
-        return await update.message.reply_text("ارسل ID:")
+الفيس: {data['facebook']}
 
-    if s == "addL":
-        if not t.isdigit():
-            return await update.message.reply_text("❌ ID غلط")
+الرقم: {data['serial']}
+"""
 
-        uid2 = int(t)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="قبول",
+                    callback_data=f"accept_{message.from_user.id}"
+                ),
 
-        # تحقق: لازم مسوي start
-        if not cur.execute("SELECT 1 FROM users WHERE id=?", (uid2,)).fetchone():
-            return await update.message.reply_text("❌ خليه يدخل البوت ويكتب /start")
+                InlineKeyboardButton(
+                    text="رفض",
+                    callback_data=f"reject_{message.from_user.id}"
+                )
+            ]
+        ]
+    )
 
-        # تحقق: ID حقيقي
-        if not await valid_user(context.application, uid2):
-            return await update.message.reply_text("❌ ID غير حقيقي")
+    await bot.send_photo(
+        OWNER_ID,
+        photo=file_id,
+        caption=text,
+        reply_markup=kb
+    )
 
-        cur.execute("INSERT OR IGNORE INTO leaders VALUES(?)",(uid2,))
-        db.commit()
-        context.user_data.clear()
+    await message.answer(
+        "تم ارسال طلبك"
+    )
 
-        return await update.message.reply_text("✅ تم إضافة قائد")
+    await state.clear()
 
-    # ===== إدارة الأندية =====
-    if t == "🏟 إدارة الأندية" and is_leader(uid):
-        kb = [["➕ إضافة نادي","📋 عرض الأندية"],["🔙 رجوع"]]
-        return await update.message.reply_text("🏟 الأندية", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+# ==============================
+# ADMIN
+# ==============================
 
-    if t == "➕ إضافة نادي":
-        context.user_data["s"] = "pres_name"
-        return await update.message.reply_text("اسم رئيس النادي:")
+@dp.message(F.text == "/admin")
+async def admin(message: Message):
 
-    if s == "pres_name":
-        context.user_data["pn"] = t
-        context.user_data["s"] = "pres_fb"
-        return await update.message.reply_text("رابط الفيس:")
-
-    if s == "pres_fb":
-        if not valid_fb(t):
-            return await update.message.reply_text("❌ رابط فيس غير صحيح")
-
-        context.user_data["pf"] = t
-        context.user_data["s"] = "pres_id"
-        return await update.message.reply_text("ID التلكرام:")
-
-    if s == "pres_id":
-        if not t.isdigit():
-            return await update.message.reply_text("❌ ID غلط")
-
-        uid2 = int(t)
-
-        if not cur.execute("SELECT 1 FROM users WHERE id=?", (uid2,)).fetchone():
-            return await update.message.reply_text("❌ لازم يسوي /start")
-
-        if not await valid_user(context.application, uid2):
-            return await update.message.reply_text("❌ ID غير حقيقي")
-
-        context.user_data["pid"] = uid2
-        context.user_data["s"] = "club_name"
-        return await update.message.reply_text("اسم النادي:")
-
-    if s == "club_name":
-        cur.execute("INSERT INTO clubs VALUES(?,?,?,?)",
-                    (t, context.user_data["pid"], context.user_data["pn"], context.user_data["pf"]))
-
-        # إعطاء صلاحية للرئيس
-        cur.execute("INSERT OR IGNORE INTO leaders VALUES(?)",(context.user_data["pid"],))
-
-        db.commit()
-        context.user_data.clear()
-
-        return await update.message.reply_text("✅ تم إنشاء النادي")
-
-    # ===== عرض الأندية =====
-    if t == "📋 عرض الأندية":
-        clubs = cur.execute("SELECT * FROM clubs").fetchall()
-
-        if not clubs:
-            return await update.message.reply_text("❌ ماكو أندية")
-
-        for c in clubs:
-            kb = [[f"👥 {c[0]}"],["🚫 اعتراض"],["🔙 رجوع"]]
-            await update.message.reply_text(
-                f"🏟 {c[0]}\n👤 {c[2]}",
-                reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
-            )
+    if not is_admin(message.from_user.id):
         return
 
-    # عرض لاعبين
-    if t.startswith("👥"):
-        club = t.replace("👥 ","")
-        ps = cur.execute("SELECT * FROM players WHERE club=?", (club,)).fetchall()
+    await message.answer(
+        "لوحة التحكم",
+        reply_markup=admin_menu()
+    )
 
-        if not ps:
-            return await update.message.reply_text("❌ ماكو لاعبين")
+# ==============================
+# REQUESTS
+# ==============================
 
-        msg = ""
-        for p in ps:
-            msg += f"👤 {p[0]}\n🔗 {p[1]}\n📸 {p[2]}\n\n"
+@dp.callback_query(F.data == "requests")
+async def requests(callback: CallbackQuery):
 
-        return await update.message.reply_text(msg)
+    cursor.execute("""
+    SELECT player_name,
+           team_name,
+           status
+    FROM players
+    """)
 
-    # ===== اعتراض =====
-    if t == "🚫 اعتراض":
-        context.user_data["s"] = "comp"
-        return await update.message.reply_text("اكتب الاعتراض:")
+    data = cursor.fetchall()
 
-    if s == "comp":
-        cur.execute("INSERT INTO requests(type,data) VALUES('complaint',?)",(t,))
+    if not data:
+
+        return await callback.message.answer(
+            "لا توجد طلبات"
+        )
+
+    text = ""
+
+    for p in data:
+
+        text += f"""
+اللاعب: {p[0]}
+
+التيم: {p[1]}
+
+الحالة: {p[2]}
+
+--------------------
+"""
+
+    await callback.message.answer(text)
+
+# ==============================
+# TEAMS
+# ==============================
+
+@dp.callback_query(F.data == "teams")
+async def teams(callback: CallbackQuery):
+
+    cursor.execute("""
+    SELECT DISTINCT team_name
+    FROM players
+    """)
+
+    teams = cursor.fetchall()
+
+    kb = InlineKeyboardBuilder()
+
+    for team in teams:
+
+        kb.button(
+            text=team[0],
+            callback_data=f"team_{team[0]}"
+        )
+
+    kb.adjust(1)
+
+    await callback.message.answer(
+        "قائمة التيمات",
+        reply_markup=kb.as_markup()
+    )
+
+# ==============================
+# TEAM PLAYERS
+# ==============================
+
+@dp.callback_query(F.data.startswith("team_"))
+async def team_players(callback: CallbackQuery):
+
+    team = callback.data.split("_")[1]
+
+    cursor.execute("""
+    SELECT player_name,
+           facebook,
+           serial,
+           status
+    FROM players
+    WHERE team_name=?
+    """, (team,))
+
+    players = cursor.fetchall()
+
+    text = f"{team}\n\n"
+
+    for p in players:
+
+        text += f"""
+اللاعب: {p[0]}
+
+الفيس: {p[1]}
+
+الرقم: {p[2]}
+
+الحالة: {p[3]}
+
+--------------------
+"""
+
+    await callback.message.answer(text)
+
+# ==============================
+# ACCEPT
+# ==============================
+
+@dp.callback_query(F.data.startswith("accept_"))
+async def accept(callback: CallbackQuery):
+
+    user_id = int(
+        callback.data.split("_")[1]
+    )
+
+    cursor.execute("""
+    UPDATE players
+    SET status='accepted'
+    WHERE user_id=?
+    """, (user_id,))
+
+    db.commit()
+
+    await bot.send_message(
+        user_id,
+        "تم قبول طلبك"
+    )
+
+    await callback.answer(
+        "تم القبول"
+    )
+
+# ==============================
+# REJECT
+# ==============================
+
+@dp.callback_query(F.data.startswith("reject_"))
+async def reject(callback: CallbackQuery):
+
+    user_id = int(
+        callback.data.split("_")[1]
+    )
+
+    cursor.execute("""
+    UPDATE players
+    SET status='rejected'
+    WHERE user_id=?
+    """, (user_id,))
+
+    db.commit()
+
+    await bot.send_message(
+        user_id,
+        "تم رفض طلبك"
+    )
+
+    await callback.answer(
+        "تم الرفض"
+    )
+
+# ==============================
+# OPEN TRANSFERS
+# ==============================
+
+@dp.callback_query(F.data == "open")
+async def open_transfer(callback: CallbackQuery):
+
+    cursor.execute("""
+    UPDATE settings
+    SET transfers=1
+    """)
+
+    db.commit()
+
+    await callback.message.answer(
+        "تم فتح الانتقالات"
+    )
+
+# ==============================
+# CLOSE TRANSFERS
+# ==============================
+
+@dp.callback_query(F.data == "close")
+async def close_transfer(callback: CallbackQuery):
+
+    cursor.execute("""
+    UPDATE settings
+    SET transfers=0
+    """)
+
+    db.commit()
+
+    await callback.message.answer(
+        "تم غلق الانتقالات"
+    )
+
+# ==============================
+# ADD LEADER
+# ==============================
+
+@dp.callback_query(F.data == "addleader")
+async def addleader_info(callback: CallbackQuery):
+
+    await callback.message.answer(
+        "ارسل:\n/addleader ID"
+    )
+
+@dp.message(F.text.startswith("/addleader"))
+async def add_leader(message: Message):
+
+    if message.from_user.id != OWNER_ID:
+        return
+
+    try:
+
+        user_id = int(
+            message.text.split()[1]
+        )
+
+        cursor.execute("""
+        INSERT INTO leaders(user_id)
+        VALUES(?)
+        """, (user_id,))
+
         db.commit()
-        context.user_data.clear()
-        return await update.message.reply_text("📥 تم إرسال الاعتراض")
 
-    # ===== الطلبات =====
-    if t == "📥 الطلبات" and is_leader(uid):
-        rs = cur.execute("SELECT * FROM requests").fetchall()
+        await message.answer(
+            "تم اضافة القائد"
+        )
 
-        if not rs:
-            return await update.message.reply_text("❌ ماكو طلبات")
+    except:
 
-        msg = ""
-        for r in rs:
-            msg += f"{r[0]} - {r[2]}\n"
+        await message.answer(
+            "خطأ"
+        )
 
-        context.user_data["s"] = "approve"
-        return await update.message.reply_text(msg + "\nارسل رقم الطلب")
+# ==============================
+# REMOVE LEADER
+# ==============================
 
-    if s == "approve":
-        context.user_data["rid"] = int(t)
-        context.user_data["s"] = "dec"
-        return await update.message.reply_text("✅ موافقة او ❌ رفض")
+@dp.callback_query(F.data == "removeleader")
+async def removeleader_info(callback: CallbackQuery):
 
-    if s == "dec":
-        cur.execute("DELETE FROM requests WHERE id=?", (context.user_data["rid"],))
+    await callback.message.answer(
+        "ارسل:\n/removeleader ID"
+    )
+
+@dp.message(F.text.startswith("/removeleader"))
+async def remove_leader(message: Message):
+
+    if message.from_user.id != OWNER_ID:
+        return
+
+    try:
+
+        user_id = int(
+            message.text.split()[1]
+        )
+
+        cursor.execute("""
+        DELETE FROM leaders
+        WHERE user_id=?
+        """, (user_id,))
+
         db.commit()
-        context.user_data.clear()
-        return await update.message.reply_text("✅ تم")
 
-    # ===== الانتقالات =====
-    if t == "⚙️ الانتقالات" and uid == OWNER_ID:
-        kb = [["🟢 فتح","🔴 غلق"]]
-        return await update.message.reply_text("⚙️ التحكم", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+        await message.answer(
+            "تم حذف القائد"
+        )
 
-    if t == "🟢 فتح":
-        set_transfer("1")
-        return await update.message.reply_text("🟢 تم الفتح")
+    except:
 
-    if t == "🔴 غلق":
-        set_transfer("0")
-        return await update.message.reply_text("🔴 تم الغلق")
+        await message.answer(
+            "خطأ"
+        )
 
-# ===== RUN =====
-def main():
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
-    app.run_polling()
+# ==============================
+# SEARCH PLAYER
+# ==============================
+
+@dp.message(F.text.startswith("/search"))
+async def search_player(message: Message):
+
+    query = message.text.replace(
+        "/search ",
+        ""
+    )
+
+    cursor.execute("""
+    SELECT team_name,
+           player_name,
+           facebook,
+           serial,
+           screenshot,
+           status
+    FROM players
+    WHERE player_name LIKE ?
+    OR facebook LIKE ?
+    """, (
+        f"%{query}%",
+        f"%{query}%"
+    ))
+
+    result = cursor.fetchall()
+
+    if not result:
+
+        return await message.answer(
+            "اللاعب غير موجود"
+        )
+
+    for r in result:
+
+        text = f"""
+التيم: {r[0]}
+
+اللاعب: {r[1]}
+
+الفيس: {r[2]}
+
+الرقم: {r[3]}
+
+الحالة: {r[5]}
+"""
+
+        await bot.send_photo(
+            chat_id=message.chat.id,
+            photo=r[4],
+            caption=text
+        )
+
+# ==============================
+# SEARCH BUTTON
+# ==============================
+
+@dp.callback_query(F.data == "search")
+async def search_help(callback: CallbackQuery):
+
+    await callback.message.answer(
+        "ابحث هكذا:\n/search اسم اللاعب"
+    )
+
+# ==============================
+# RUN
+# ==============================
+
+async def main():
+
+    print("BOT STARTED")
+
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    main()
+
+    asyncio.run(main())
