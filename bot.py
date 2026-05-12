@@ -1,8 +1,4 @@
-# ======================================
-# IRAQ CLANS UNION BOT
-# PROFESSIONAL VERSION
-# ======================================
-
+import os
 import re
 import asyncio
 import aiosqlite
@@ -26,7 +22,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 # SETTINGS
 # ======================================
 
-TOKEN = "BOT_TOKEN"
+TOKEN = os.getenv("BOT_TOKEN")
 OWNER_ID = 653170487
 
 # ======================================
@@ -35,7 +31,9 @@ OWNER_ID = 653170487
 
 bot = Bot(
     token=TOKEN,
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+    default=DefaultBotProperties(
+        parse_mode=ParseMode.HTML
+    )
 )
 
 storage = MemoryStorage()
@@ -195,7 +193,9 @@ async def start(message: Message):
 
     await message.answer(
         text,
-        reply_markup=await main_menu(message.from_user.id)
+        reply_markup=await main_menu(
+            message.from_user.id
+        )
     )
 
 # ======================================
@@ -233,7 +233,9 @@ async def register(callback: CallbackQuery, state: FSMContext):
 @dp.message(Register.team)
 async def reg_team(message: Message, state: FSMContext):
 
-    await state.update_data(team=message.text)
+    await state.update_data(
+        team=message.text
+    )
 
     await message.answer(
         "👤 ارسل اسم اللاعب"
@@ -248,7 +250,9 @@ async def reg_team(message: Message, state: FSMContext):
 @dp.message(Register.player)
 async def reg_player(message: Message, state: FSMContext):
 
-    await state.update_data(player=message.text)
+    await state.update_data(
+        player=message.text
+    )
 
     await message.answer(
         "🌐 ارسل رابط الفيسبوك"
@@ -286,7 +290,9 @@ async def reg_facebook(message: Message, state: FSMContext):
 @dp.message(Register.phone)
 async def reg_phone(message: Message, state: FSMContext):
 
-    await state.update_data(phone=message.text)
+    await state.update_data(
+        phone=message.text
+    )
 
     await message.answer(
         "🖼 ارسل سكرين الرقم التسلسلي"
