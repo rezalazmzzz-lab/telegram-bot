@@ -477,3 +477,108 @@ async def no_photo(message: Message):
     await message.answer(
         "يرجى ارسال صورة فقط"
     )
+
+# =========================================
+# ACCEPT
+# =========================================
+
+@dp.callback_query(F.data.startswith("accept_"))
+async def accept(callback: CallbackQuery):
+
+    if not await is_leader(callback.from_user.id):
+        return
+
+    user_id = int(callback.data.split("_")[1])
+
+    async with aiosqlite.connect("union.db") as db:
+
+        await db.execute(
+            "UPDATE players SET status='accepted' WHERE user_id=?",
+            (user_id,)
+        )
+
+        await db.commit()
+
+    await bot.send_message(
+        user_id,
+        "تمت الموافقة على طلبك"
+    )
+
+    await callback.answer("تم القبول")
+
+# =========================================
+# REJECT
+# =========================================
+
+@dp.callback_query(F.data.startswith("reject_"))
+async def reject(callback: CallbackQuery):
+
+    if not await is_leader(callback.from_user.id):
+        return
+
+    user_id = int(callback.data.split("_")[1])
+
+    async with aiosqlite.connect("union.db") as db:
+
+        await db.execute(
+            "DELETE FROM players WHERE user_id=?",
+            (user_id,)
+        )
+
+        await db.commit()
+
+    await bot.send_message(
+        user_id,
+        "تم رفض طلبك"
+    )
+
+    await callback.answer("تم الرفض")
+
+# =========================================
+# REQUESTS
+# =========================================
+
+@dp.callback_query(F.data == "requests")
+async def requests(callback: CallbackQuery):
+
+    if not await is_leader(callback.from_user.id):
+        return
+
+    async with aiosqlite.connect("union.db") as db:
+
+        async with db.execute("""
+        SELECT team, player_name
+        FROM players
+        WHERE status='pending'
+        """) as cursor:
+
+            rows = await cursor.fetchall()
+
+    if not rows:
+
+        return await callback.message.answer(
+            "لا توجد طلبات"
+        )
+
+    text = "الطلبات الحالية\n\n"
+
+    for row in rows:
+
+        text += f"{row[0]} - {row[1]}\n"
+
+    await callback.message.answer(text)
+
+# =========================================
+# RUN
+# =========================================
+
+async def main():
+
+    await setup_db()
+
+    print("BOT IS RUNNING")
+
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
