@@ -54,11 +54,14 @@ class Register(StatesGroup):
     phone = State()
     screenshot = State()
 
+
 class SearchPlayer(StatesGroup):
     text = State()
 
+
 class AddLeader(StatesGroup):
     user_id = State()
+
 
 class RemoveLeader(StatesGroup):
     user_id = State()
@@ -126,6 +129,7 @@ async def is_leader(user_id):
 
             return row is not None
 
+
 async def transfers_open():
 
     async with aiosqlite.connect("union.db") as db:
@@ -137,6 +141,7 @@ async def transfers_open():
             row = await cursor.fetchone()
 
             return row[0] == "on"
+
 
 def valid_facebook(url):
 
@@ -181,6 +186,7 @@ async def main_menu(user_id):
         ])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
 
 async def admin_menu():
 
@@ -332,6 +338,7 @@ async def reg_team(message: Message, state: FSMContext):
 
     await state.set_state(Register.player)
 
+
 @dp.message(Register.player)
 async def reg_player(message: Message, state: FSMContext):
 
@@ -340,6 +347,7 @@ async def reg_player(message: Message, state: FSMContext):
     await message.answer("🌐 ارسل رابط الفيسبوك")
 
     await state.set_state(Register.facebook)
+
 
 @dp.message(Register.facebook)
 async def reg_facebook(message: Message, state: FSMContext):
@@ -355,6 +363,7 @@ async def reg_facebook(message: Message, state: FSMContext):
     await message.answer("📱 ارسل الرقم التسلسلي")
 
     await state.set_state(Register.phone)
+
 
 @dp.message(Register.phone)
 async def reg_phone(message: Message, state: FSMContext):
@@ -650,6 +659,7 @@ async def search(callback: CallbackQuery, state: FSMContext):
 
     await state.set_state(SearchPlayer.text)
 
+
 @dp.message(SearchPlayer.text)
 async def do_search(message: Message, state: FSMContext):
 
@@ -757,6 +767,7 @@ async def add_leader(callback: CallbackQuery, state: FSMContext):
 
     await state.set_state(AddLeader.user_id)
 
+
 @dp.message(AddLeader.user_id)
 async def save_leader(message: Message, state: FSMContext):
 
@@ -801,6 +812,7 @@ async def remove_leader(callback: CallbackQuery, state: FSMContext):
 
     await state.set_state(RemoveLeader.user_id)
 
+
 @dp.message(RemoveLeader.user_id)
 async def delete_leader(message: Message, state: FSMContext):
 
@@ -843,5 +855,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-هذه الكود ما ريد تغير اي شي بي فقط الايقونات ما ريدهن وي المحادثه اريدهن بالخانه الاساسيه 
