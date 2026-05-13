@@ -1,3 +1,7 @@
+# ======================================
+# IRAQ CLANS UNION BOT
+# ======================================
+
 import os
 import re
 import asyncio
@@ -7,26 +11,27 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import CommandStart
+
 from aiogram.types import (
     Message,
     ReplyKeyboardMarkup,
-    KeyboardButton,
+    KeyboardButton
 )
 
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 
-# =========================
+# ======================================
 # معلومات البوت
-# =========================
+# ======================================
 
 TOKEN = os.getenv("BOT_TOKEN")
 OWNER_ID = 653170487
 
-# =========================
-# تشغيل
-# =========================
+# ======================================
+# تشغيل البوت
+# ======================================
 
 bot = Bot(
     token=TOKEN,
@@ -38,9 +43,9 @@ bot = Bot(
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# =========================
+# ======================================
 # الحالات
-# =========================
+# ======================================
 
 class Register(StatesGroup):
     team = State()
@@ -61,9 +66,9 @@ class AddLeader(StatesGroup):
 class RemoveLeader(StatesGroup):
     user_id = State()
 
-# =========================
+# ======================================
 # قاعدة البيانات
-# =========================
+# ======================================
 
 async def setup_db():
 
@@ -107,9 +112,9 @@ async def setup_db():
 
         await db.commit()
 
-# =========================
+# ======================================
 # دوال
-# =========================
+# ======================================
 
 async def is_leader(user_id):
 
@@ -144,9 +149,9 @@ def valid_facebook(url):
 
     return re.match(pattern, url)
 
-# =========================
+# ======================================
 # القوائم
-# =========================
+# ======================================
 
 def main_menu(admin=False):
 
@@ -169,23 +174,21 @@ def main_menu(admin=False):
 
 def admin_menu():
 
-    buttons = [
-        [KeyboardButton(text="📥 الطلبات")],
-        [KeyboardButton(text="🔓 فتح الانتقالات")],
-        [KeyboardButton(text="🔒 غلق الانتقالات")],
-        [KeyboardButton(text="➕ اضافة قائد")],
-        [KeyboardButton(text="➖ حذف قائد")],
-        [KeyboardButton(text="🏠 رجوع")]
-    ]
-
     return ReplyKeyboardMarkup(
-        keyboard=buttons,
+        keyboard=[
+            [KeyboardButton(text="📥 الطلبات")],
+            [KeyboardButton(text="🔓 فتح الانتقالات")],
+            [KeyboardButton(text="🔒 غلق الانتقالات")],
+            [KeyboardButton(text="➕ اضافة قائد")],
+            [KeyboardButton(text="➖ حذف قائد")],
+            [KeyboardButton(text="🏠 رجوع")]
+        ],
         resize_keyboard=True
     )
 
-# =========================
+# ======================================
 # ستارت
-# =========================
+# ======================================
 
 @dp.message(CommandStart())
 async def start(message: Message):
@@ -197,9 +200,9 @@ async def start(message: Message):
         )
     )
 
-# =========================
+# ======================================
 # رجوع
-# =========================
+# ======================================
 
 @dp.message(F.text == "🏠 رجوع")
 async def back_home(message: Message):
@@ -211,9 +214,9 @@ async def back_home(message: Message):
         )
     )
 
-# =========================
+# ======================================
 # الادارة
-# =========================
+# ======================================
 
 @dp.message(F.text == "🛠 الإدارة")
 async def admin_panel(message: Message):
@@ -226,9 +229,9 @@ async def admin_panel(message: Message):
         reply_markup=admin_menu()
     )
 
-# =========================
+# ======================================
 # تسجيل
-# =========================
+# ======================================
 
 @dp.message(F.text == "📋 تسجيل")
 async def register(message: Message, state: FSMContext):
@@ -263,9 +266,9 @@ async def register(message: Message, state: FSMContext):
 
     await state.set_state(Register.team)
 
-# =========================
+# ======================================
 # التسجيل
-# =========================
+# ======================================
 
 @dp.message(Register.team)
 async def reg_team(message: Message, state: FSMContext):
@@ -358,7 +361,7 @@ async def reg_screen(message: Message, state: FSMContext):
             leaders = [x[0] for x in rows]
 
     text = f"""
-📥 طلب جديد
+📥 طلب تسجيل جديد
 
 🏆 التيم : {data['team']}
 👤 اللاعب : {data['player']}
@@ -381,23 +384,25 @@ async def reg_screen(message: Message, state: FSMContext):
             pass
 
     await message.answer(
-        "✅ تم ارسال طلبك للمراجعة"
+        "✅ سيتم مراجعة طلبك"
     )
 
     await state.clear()
 
-# =========================
+# ======================================
 # عرض التيمات
-# =========================
+# ======================================
 
 @dp.message(F.text == "🏆 عرض التيمات")
 async def teams(message: Message):
 
     async with aiosqlite.connect("union.db") as db:
 
-        async with db.execute(
-            "SELECT DISTINCT team FROM players WHERE status='accepted'"
-        ) as cursor:
+        async with db.execute("""
+        SELECT DISTINCT team
+        FROM players
+        WHERE status='accepted'
+        """) as cursor:
 
             rows = await cursor.fetchall()
 
@@ -411,13 +416,34 @@ async def teams(message: Message):
 
     for row in rows:
 
-        text += f"🏆 {row[0]}\n"
+        team = row[0]
+
+        text += f"🏆 {team}\n"
+
+        async with aiosqlite.connect("union.db") as db:
+
+            async with db.execute("""
+            SELECT player_name,facebook,phone
+            FROM players
+            WHERE team=? AND status='accepted'
+            """, (team,)) as cursor:
+
+                players = await cursor.fetchall()
+
+        for p in players:
+
+            text += f"""
+👤 {p[0]}
+🌐 {p[1]}
+📱 {p[2]}
+
+"""
 
     await message.answer(text)
 
-# =========================
+# ======================================
 # بحث لاعب
-# =========================
+# ======================================
 
 @dp.message(F.text == "🔎 بحث لاعب")
 async def search(message: Message, state: FSMContext):
@@ -443,8 +469,7 @@ async def search_player(message: Message, state: FSMContext):
         facebook,
         phone
         FROM players
-        WHERE
-        player_name LIKE ?
+        WHERE player_name LIKE ?
         """, (f"%{text}%",)) as cursor:
 
             rows = await cursor.fetchall()
@@ -471,127 +496,9 @@ async def search_player(message: Message, state: FSMContext):
 
     await state.clear()
 
-# =========================
-# فتح الانتقالات
-# =========================
-
-@dp.message(F.text == "🔓 فتح الانتقالات")
-async def open_transfers(message: Message):
-
-    if not await is_leader(message.from_user.id):
-        return
-
-    async with aiosqlite.connect("union.db") as db:
-
-        await db.execute("""
-        UPDATE settings
-        SET value='on'
-        WHERE name='transfers'
-        """)
-
-        await db.commit()
-
-    await message.answer(
-        "✅ تم فتح الانتقالات"
-    )
-
-# =========================
-# غلق الانتقالات
-# =========================
-
-@dp.message(F.text == "🔒 غلق الانتقالات")
-async def close_transfers(message: Message):
-
-    if not await is_leader(message.from_user.id):
-        return
-
-    async with aiosqlite.connect("union.db") as db:
-
-        await db.execute("""
-        UPDATE settings
-        SET value='off'
-        WHERE name='transfers'
-        """)
-
-        await db.commit()
-
-    await message.answer(
-        "✅ تم غلق الانتقالات"
-    )
-
-# =========================
-# اضافة قائد
-# =========================
-
-@dp.message(F.text == "➕ اضافة قائد")
-async def add_leader(message: Message, state: FSMContext):
-
-    if message.from_user.id != OWNER_ID:
-        return
-
-    await message.answer(
-        "🆔 ارسل ايدي القائد"
-    )
-
-    await state.set_state(AddLeader.user_id)
-
-
-@dp.message(AddLeader.user_id)
-async def save_leader(message: Message, state: FSMContext):
-
-    async with aiosqlite.connect("union.db") as db:
-
-        await db.execute(
-            "INSERT OR IGNORE INTO leaders(user_id) VALUES(?)",
-            (int(message.text),)
-        )
-
-        await db.commit()
-
-    await message.answer(
-        "✅ تم اضافة القائد"
-    )
-
-    await state.clear()
-
-# =========================
-# حذف قائد
-# =========================
-
-@dp.message(F.text == "➖ حذف قائد")
-async def remove_leader(message: Message, state: FSMContext):
-
-    if message.from_user.id != OWNER_ID:
-        return
-
-    await message.answer(
-        "🆔 ارسل ايدي القائد"
-    )
-
-    await state.set_state(RemoveLeader.user_id)
-
-
-@dp.message(RemoveLeader.user_id)
-async def delete_leader(message: Message, state: FSMContext):
-
-    async with aiosqlite.connect("union.db") as db:
-
-        await db.execute(
-            "DELETE FROM leaders WHERE user_id=?",
-            (int(message.text),)
-        )
-
-        await db.commit()
-
-    await message.answer(
-        "✅ تم حذف القائد"
-    )
-
-    await state.clear()
-
-# =========================
+# ======================================
 # الطلبات
-# =========================
+# ======================================
 
 @dp.message(F.text == "📥 الطلبات")
 async def requests(message: Message):
@@ -635,9 +542,127 @@ async def requests(message: Message):
             caption=text
         )
 
-# =========================
+# ======================================
+# فتح الانتقالات
+# ======================================
+
+@dp.message(F.text == "🔓 فتح الانتقالات")
+async def open_transfers(message: Message):
+
+    if not await is_leader(message.from_user.id):
+        return
+
+    async with aiosqlite.connect("union.db") as db:
+
+        await db.execute("""
+        UPDATE settings
+        SET value='on'
+        WHERE name='transfers'
+        """)
+
+        await db.commit()
+
+    await message.answer(
+        "✅ تم فتح الانتقالات"
+    )
+
+# ======================================
+# غلق الانتقالات
+# ======================================
+
+@dp.message(F.text == "🔒 غلق الانتقالات")
+async def close_transfers(message: Message):
+
+    if not await is_leader(message.from_user.id):
+        return
+
+    async with aiosqlite.connect("union.db") as db:
+
+        await db.execute("""
+        UPDATE settings
+        SET value='off'
+        WHERE name='transfers'
+        """)
+
+        await db.commit()
+
+    await message.answer(
+        "✅ تم غلق الانتقالات"
+    )
+
+# ======================================
+# اضافة قائد
+# ======================================
+
+@dp.message(F.text == "➕ اضافة قائد")
+async def add_leader(message: Message, state: FSMContext):
+
+    if message.from_user.id != OWNER_ID:
+        return
+
+    await message.answer(
+        "🆔 ارسل ايدي القائد"
+    )
+
+    await state.set_state(AddLeader.user_id)
+
+
+@dp.message(AddLeader.user_id)
+async def save_leader(message: Message, state: FSMContext):
+
+    async with aiosqlite.connect("union.db") as db:
+
+        await db.execute(
+            "INSERT OR IGNORE INTO leaders(user_id) VALUES(?)",
+            (int(message.text),)
+        )
+
+        await db.commit()
+
+    await message.answer(
+        "✅ تم اضافة القائد"
+    )
+
+    await state.clear()
+
+# ======================================
+# حذف قائد
+# ======================================
+
+@dp.message(F.text == "➖ حذف قائد")
+async def remove_leader(message: Message, state: FSMContext):
+
+    if message.from_user.id != OWNER_ID:
+        return
+
+    await message.answer(
+        "🆔 ارسل ايدي القائد"
+    )
+
+    await state.set_state(RemoveLeader.user_id)
+
+
+@dp.message(RemoveLeader.user_id)
+async def delete_leader(message: Message, state: FSMContext):
+
+    async with aiosqlite.connect("union.db") as db:
+
+        await db.execute(
+            "DELETE FROM leaders WHERE user_id=?",
+            (int(message.text),)
+        )
+
+        await db.commit()
+
+    await message.answer(
+        "✅ تم حذف القائد"
+    )
+
+    await state.clear()
+
+# ======================================
 # تشغيل
-# =========================
+# ======================================
 
 async def main():
 
