@@ -1,675 +1,663 @@
-# ======================================
+# ==============================
 # IRAQ CLANS UNION BOT
-# ======================================
+# FULL FIXED VERSION
+# ==============================
 
 import os
 import re
+import sqlite3
 import asyncio
-import aiosqlite
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
-from aiogram.filters import CommandStart
 
 from aiogram.types import (
     Message,
     ReplyKeyboardMarkup,
-    KeyboardButton
+    KeyboardButton,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    CallbackQuery
 )
 
-from aiogram.fsm.state import StatesGroup, State
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.filters import CommandStart
 
-# ======================================
-# معلومات البوت
-# ======================================
+# ==============================
+# TOKEN
+# ==============================
 
 TOKEN = os.getenv("BOT_TOKEN")
-OWNER_ID = 653170487
 
-# ======================================
-# تشغيل البوت
-# ======================================
+# ==============================
+# BOT
+# ==============================
 
 bot = Bot(
     token=TOKEN,
-    default=DefaultBotProperties(
-        parse_mode=ParseMode.HTML
-    )
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
 )
 
-storage = MemoryStorage()
-dp = Dispatcher(storage=storage)
+dp = Dispatcher()
 
-# ======================================
-# الحالات
-# ======================================
+# ==============================
+# DATABASE
+# ==============================
 
-class Register(StatesGroup):
-    team = State()
-    player = State()
-    facebook = State()
-    phone = State()
-    screenshot = State()
+db = sqlite3.connect("union.db")
+cur = db.cursor()
 
+cur.execute("""
+CREATE TABLE IF NOT EXISTS players(
+    user_id INTEGER,
+    team TEXT,
+    player TEXT,
+    fb TEXT,
+    serial TEXT,
+    photo TEXT,
+    status TEXT
+)
+""")
 
-class SearchPlayer(StatesGroup):
-    text = State()
+cur.execute("""
+CREATE TABLE IF NOT EXISTS captains(
+    user_id INTEGER
+)
+""")
 
+cur.execute("""
+CREATE TABLE IF NOT EXISTS settings(
+    id INTEGER PRIMARY KEY,
+    transfers INTEGER
+)
+""")
 
-class AddLeader(StatesGroup):
-    user_id = State()
+db.commit()
 
+cur.execute("SELECT * FROM settings WHERE id=1")
+if not cur.fetchone():
+    cur.execute("INSERT INTO settings VALUES(1,0)")
+    db.commit()
 
-class RemoveLeader(StatesGroup):
-    user_id = State()
+# ==============================
+# STATES
+# ==============================
 
-# ======================================
-# قاعدة البيانات
-# ======================================
+users = {}
 
-async def setup_db():
+# ==============================
+# MENUS
+# ==============================
 
-    async with aiosqlite.connect("union.db") as db:
-
-        await db.execute("""
-        CREATE TABLE IF NOT EXISTS players(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            team TEXT,
-            player_name TEXT,
-            facebook TEXT,
-            phone TEXT,
-            screenshot TEXT,
-            status TEXT
-        )
-        """)
-
-        await db.execute("""
-        CREATE TABLE IF NOT EXISTS leaders(
-            user_id INTEGER PRIMARY KEY
-        )
-        """)
-
-        await db.execute("""
-        CREATE TABLE IF NOT EXISTS settings(
-            name TEXT PRIMARY KEY,
-            value TEXT
-        )
-        """)
-
-        await db.execute("""
-        INSERT OR IGNORE INTO leaders(user_id)
-        VALUES(?)
-        """, (OWNER_ID,))
-
-        await db.execute("""
-        INSERT OR IGNORE INTO settings(name,value)
-        VALUES('transfers','off')
-        """)
-
-        await db.commit()
-
-# ======================================
-# دوال
-# ======================================
-
-async def is_leader(user_id):
-
-    async with aiosqlite.connect("union.db") as db:
-
-        async with db.execute(
-            "SELECT * FROM leaders WHERE user_id=?",
-            (user_id,)
-        ) as cursor:
-
-            row = await cursor.fetchone()
-
-            return row is not None
-
-
-async def transfers_open():
-
-    async with aiosqlite.connect("union.db") as db:
-
-        async with db.execute(
-            "SELECT value FROM settings WHERE name='transfers'"
-        ) as cursor:
-
-            row = await cursor.fetchone()
-
-            return row[0] == "on"
-
-
-def valid_facebook(url):
-
-    pattern = r'(https?://)?(www\.)?(facebook|fb)\.com/.+'
-
-    return re.match(pattern, url)
-
-# ======================================
-# القوائم
-# ======================================
-
-def main_menu(admin=False):
-
-    buttons = [
-        [KeyboardButton(text="📋 تسجيل")],
+main_kb = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="📄 تسجيل")],
         [KeyboardButton(text="🏆 عرض التيمات")],
-        [KeyboardButton(text="🔎 بحث لاعب")]
-    ]
+        [KeyboardButton(text="🔍 بحث لاعب")],
+        [KeyboardButton(text="🛠 الإدارة")]
+    ],
+    resize_keyboard=True
+)
 
-    if admin:
-        buttons.append(
-            [KeyboardButton(text="🛠 الإدارة")]
-        )
+admin_kb = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="📥 الطلبات")],
+        [KeyboardButton(text="🔓 فتح الانتقالات")],
+        [KeyboardButton(text="🔒 غلق الانتقالات")],
+        [KeyboardButton(text="➕ اضافة قائد")],
+        [KeyboardButton(text="➖ حذف قائد")],
+        [KeyboardButton(text="🏠 رجوع")]
+    ],
+    resize_keyboard=True
+)
 
-    return ReplyKeyboardMarkup(
-        keyboard=buttons,
-        resize_keyboard=True
-    )
-
-
-def admin_menu():
-
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📥 الطلبات")],
-            [KeyboardButton(text="🔓 فتح الانتقالات")],
-            [KeyboardButton(text="🔒 غلق الانتقالات")],
-            [KeyboardButton(text="➕ اضافة قائد")],
-            [KeyboardButton(text="➖ حذف قائد")],
-            [KeyboardButton(text="🏠 رجوع")]
-        ],
-        resize_keyboard=True
-    )
-
-# ======================================
-# ستارت
-# ======================================
+# ==============================
+# START
+# ==============================
 
 @dp.message(CommandStart())
 async def start(message: Message):
-
     await message.answer(
-        "🇮🇶 اهلا بك في الاتحاد العراقي للكلانات",
-        reply_markup=main_menu(
-            await is_leader(message.from_user.id)
-        )
+        "🇮🇶 <b>الاتحاد العراقي للتيمات</b>\n\n"
+        "اهلاً وسهلاً بك ❤️",
+        reply_markup=main_kb
     )
 
-# ======================================
+# ==============================
 # رجوع
-# ======================================
+# ==============================
 
 @dp.message(F.text == "🏠 رجوع")
-async def back_home(message: Message):
-
+async def back(message: Message):
     await message.answer(
         "🏠 القائمة الرئيسية",
-        reply_markup=main_menu(
-            await is_leader(message.from_user.id)
-        )
+        reply_markup=main_kb
     )
 
-# ======================================
-# الادارة
-# ======================================
+# ==============================
+# الإدارة
+# ==============================
 
 @dp.message(F.text == "🛠 الإدارة")
 async def admin_panel(message: Message):
 
-    if not await is_leader(message.from_user.id):
-        return
-
-    await message.answer(
-        "🛠 لوحة الادارة",
-        reply_markup=admin_menu()
+    cur.execute(
+        "SELECT * FROM captains WHERE user_id=?",
+        (message.from_user.id,)
     )
 
-# ======================================
+    if not cur.fetchone():
+        return await message.answer("❌ هذا القسم للقادة فقط")
+
+    await message.answer(
+        "🛠 لوحة الإدارة",
+        reply_markup=admin_kb
+    )
+
+# ==============================
+# فتح الانتقالات
+# ==============================
+
+@dp.message(F.text == "🔓 فتح الانتقالات")
+async def open_transfer(message: Message):
+
+    cur.execute(
+        "SELECT * FROM captains WHERE user_id=?",
+        (message.from_user.id,)
+    )
+
+    if not cur.fetchone():
+        return
+
+    cur.execute(
+        "UPDATE settings SET transfers=1 WHERE id=1"
+    )
+
+    db.commit()
+
+    await message.answer("✅ تم فتح الانتقالات")
+
+# ==============================
+# غلق الانتقالات
+# ==============================
+
+@dp.message(F.text == "🔒 غلق الانتقالات")
+async def close_transfer(message: Message):
+
+    cur.execute(
+        "SELECT * FROM captains WHERE user_id=?",
+        (message.from_user.id,)
+    )
+
+    if not cur.fetchone():
+        return
+
+    cur.execute(
+        "UPDATE settings SET transfers=0 WHERE id=1"
+    )
+
+    db.commit()
+
+    await message.answer("✅ تم غلق الانتقالات")
+
+# ==============================
+# اضافة قائد
+# ==============================
+
+@dp.message(F.text == "➕ اضافة قائد")
+async def add_cap(message: Message):
+
+    users[message.from_user.id] = {"state": "add_cap"}
+
+    await message.answer(
+        "➕ ارسل ايدي القائد"
+    )
+
+@dp.message()
+async def all_messages(message: Message):
+
+    uid = message.from_user.id
+
+    if uid not in users:
+        return
+
+    state = users[uid]["state"]
+
+    # ==========================
+    # ADD CAPTAIN
+    # ==========================
+
+    if state == "add_cap":
+
+        try:
+            target = int(message.text)
+
+            cur.execute(
+                "INSERT INTO captains VALUES(?)",
+                (target,)
+            )
+
+            db.commit()
+
+            await message.answer(
+                "✅ تمت اضافة القائد"
+            )
+
+        except:
+            await message.answer(
+                "❌ ايدي غير صالح"
+            )
+
+        users.pop(uid)
+
+    # ==========================
+    # DELETE CAPTAIN
+    # ==========================
+
+    elif state == "del_cap":
+
+        try:
+            target = int(message.text)
+
+            cur.execute(
+                "DELETE FROM captains WHERE user_id=?",
+                (target,)
+            )
+
+            db.commit()
+
+            await message.answer(
+                "✅ تم حذف القائد"
+            )
+
+        except:
+            await message.answer(
+                "❌ خطأ"
+            )
+
+        users.pop(uid)
+
+    # ==========================
+    # SEARCH PLAYER
+    # ==========================
+
+    elif state == "search":
+
+        name = message.text
+
+        cur.execute(
+            "SELECT * FROM players WHERE player LIKE ? AND status='accepted'",
+            (f"%{name}%",)
+        )
+
+        data = cur.fetchone()
+
+        if not data:
+            await message.answer("❌ اللاعب غير موجود")
+            users.pop(uid)
+            return
+
+        text = (
+            f"🏆 التيم: {data[1]}\n"
+            f"👤 اللاعب: {data[2]}\n"
+            f"🔗 الفيس: {data[3]}\n"
+            f"📱 الرقم: {data[4]}"
+        )
+
+        await message.answer(text)
+
+        users.pop(uid)
+
+    # ==========================
+    # REGISTER
+    # ==========================
+
+    elif state == "team":
+
+        users[uid]["team"] = message.text
+        users[uid]["state"] = "player"
+
+        await message.answer("👤 ارسل اسم اللاعب")
+
+    elif state == "player":
+
+        users[uid]["player"] = message.text
+        users[uid]["state"] = "fb"
+
+        await message.answer("🔗 ارسل رابط الفيس")
+
+    elif state == "fb":
+
+        if "facebook.com" not in message.text:
+            return await message.answer(
+                "❌ رابط غير صالح"
+            )
+
+        users[uid]["fb"] = message.text
+        users[uid]["state"] = "serial"
+
+        await message.answer(
+            "📱 ارسل الرقم التسلسلي"
+        )
+
+    elif state == "serial":
+
+        users[uid]["serial"] = message.text
+        users[uid]["state"] = "photo"
+
+        await message.answer(
+            "🖼 ارسل سكرين الرقم التسلسلي"
+        )
+
+# ==============================
+# حذف قائد
+# ==============================
+
+@dp.message(F.text == "➖ حذف قائد")
+async def del_cap(message: Message):
+
+    users[message.from_user.id] = {"state": "del_cap"}
+
+    await message.answer(
+        "➖ ارسل ايدي القائد"
+    )
+
+# ==============================
+# بحث لاعب
+# ==============================
+
+@dp.message(F.text == "🔍 بحث لاعب")
+async def search(message: Message):
+
+    users[message.from_user.id] = {"state": "search"}
+
+    await message.answer(
+        "🔍 ارسل اسم اللاعب"
+    )
+
+# ==============================
 # تسجيل
-# ======================================
+# ==============================
 
-@dp.message(F.text == "📋 تسجيل")
-async def register(message: Message, state: FSMContext):
+@dp.message(F.text == "📄 تسجيل")
+async def register(message: Message):
 
-    async with aiosqlite.connect("union.db") as db:
+    cur.execute(
+        "SELECT transfers FROM settings WHERE id=1"
+    )
 
-        async with db.execute(
-            "SELECT * FROM players WHERE user_id=?",
-            (message.from_user.id,)
-        ) as cursor:
+    transfers = cur.fetchone()[0]
 
-            player = await cursor.fetchone()
+    cur.execute(
+        "SELECT * FROM players WHERE user_id=? AND status='accepted'",
+        (message.from_user.id,)
+    )
 
-    if player and not await transfers_open():
+    old = cur.fetchone()
 
+    if old and transfers == 0:
         return await message.answer(
             "❌ انت مسجل بالفعل"
         )
 
-    if player and await transfers_open():
-
-        async with aiosqlite.connect("union.db") as db:
-
-            await db.execute(
-                "DELETE FROM players WHERE user_id=?",
-                (message.from_user.id,)
-            )
-
-            await db.commit()
-
-    await message.answer("🏆 ارسل اسم التيم")
-
-    await state.set_state(Register.team)
-
-# ======================================
-# التسجيل
-# ======================================
-
-@dp.message(Register.team)
-async def reg_team(message: Message, state: FSMContext):
-
-    await state.update_data(team=message.text)
-
-    await message.answer("👤 ارسل اسم اللاعب")
-
-    await state.set_state(Register.player)
-
-
-@dp.message(Register.player)
-async def reg_player(message: Message, state: FSMContext):
-
-    await state.update_data(player=message.text)
-
-    await message.answer("🌐 ارسل رابط الفيس")
-
-    await state.set_state(Register.facebook)
-
-
-@dp.message(Register.facebook)
-async def reg_facebook(message: Message, state: FSMContext):
-
-    if not valid_facebook(message.text):
-
-        return await message.answer(
-            "❌ رابط غير صحيح"
+    if old and transfers == 1:
+        cur.execute(
+            "DELETE FROM players WHERE user_id=?",
+            (message.from_user.id,)
         )
+        db.commit()
 
-    await state.update_data(facebook=message.text)
+    users[message.from_user.id] = {"state": "team"}
 
-    await message.answer("📱 ارسل الرقم")
+    await message.answer(
+        "🏆 ارسل اسم التيم"
+    )
 
-    await state.set_state(Register.phone)
+# ==============================
+# PHOTO
+# ==============================
 
+@dp.message(F.photo)
+async def photo(message: Message):
 
-@dp.message(Register.phone)
-async def reg_phone(message: Message, state: FSMContext):
+    uid = message.from_user.id
 
-    await state.update_data(phone=message.text)
+    if uid not in users:
+        return
 
-    await message.answer("🖼 ارسل السكرين")
-
-    await state.set_state(Register.screenshot)
-
-
-@dp.message(Register.screenshot, F.photo)
-async def reg_screen(message: Message, state: FSMContext):
-
-    data = await state.get_data()
+    if users[uid]["state"] != "photo":
+        return
 
     photo = message.photo[-1].file_id
 
-    async with aiosqlite.connect("union.db") as db:
+    data = users[uid]
 
-        await db.execute("""
-        INSERT INTO players(
-            user_id,
-            team,
-            player_name,
-            facebook,
-            phone,
-            screenshot,
-            status
-        )
-        VALUES(?,?,?,?,?,?,?)
-        """, (
-            message.from_user.id,
-            data["team"],
-            data["player"],
-            data["facebook"],
-            data["phone"],
-            photo,
-            "pending"
-        ))
+    cur.execute("""
+    INSERT INTO players VALUES(?,?,?,?,?,?,?)
+    """, (
+        uid,
+        data["team"],
+        data["player"],
+        data["fb"],
+        data["serial"],
+        photo,
+        "pending"
+    ))
 
-        await db.commit()
+    db.commit()
 
-    leaders = []
+    caption = (
+        f"📥 طلب جديد\n\n"
+        f"🏆 التيم: {data['team']}\n"
+        f"👤 اللاعب: {data['player']}\n"
+        f"🔗 الفيس:\n{data['fb']}\n"
+        f"📱 الرقم: {data['serial']}"
+    )
 
-    async with aiosqlite.connect("union.db") as db:
+    buttons = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ قبول",
+                    callback_data=f"acc_{uid}"
+                ),
+                InlineKeyboardButton(
+                    text="❌ رفض",
+                    callback_data=f"rej_{uid}"
+                )
+            ]
+        ]
+    )
 
-        async with db.execute(
-            "SELECT user_id FROM leaders"
-        ) as cursor:
+    cur.execute("SELECT user_id FROM captains")
 
-            rows = await cursor.fetchall()
+    caps = cur.fetchall()
 
-            leaders = [x[0] for x in rows]
-
-    text = f"""
-📥 طلب تسجيل جديد
-
-🏆 التيم : {data['team']}
-👤 اللاعب : {data['player']}
-🌐 الفيس : {data['facebook']}
-📱 الرقم : {data['phone']}
-🆔 الايدي : {message.from_user.id}
-"""
-
-    for leader in leaders:
-
+    for c in caps:
         try:
-
             await bot.send_photo(
-                leader,
+                c[0],
                 photo,
-                caption=text
+                caption=caption,
+                reply_markup=buttons
             )
-
         except:
             pass
 
     await message.answer(
-        "✅ سيتم مراجعة طلبك"
+        "✅ تم ارسال طلبك للمراجعة"
     )
 
-    await state.clear()
+    users.pop(uid)
 
-# ======================================
-# عرض التيمات
-# ======================================
-
-@dp.message(F.text == "🏆 عرض التيمات")
-async def teams(message: Message):
-
-    async with aiosqlite.connect("union.db") as db:
-
-        async with db.execute("""
-        SELECT DISTINCT team
-        FROM players
-        WHERE status='accepted'
-        """) as cursor:
-
-            rows = await cursor.fetchall()
-
-    if not rows:
-
-        return await message.answer(
-            "❌ لا توجد تيمات"
-        )
-
-    text = "🏆 قائمة التيمات\n\n"
-
-    for row in rows:
-
-        team = row[0]
-
-        text += f"🏆 {team}\n"
-
-        async with aiosqlite.connect("union.db") as db:
-
-            async with db.execute("""
-            SELECT player_name,facebook,phone
-            FROM players
-            WHERE team=? AND status='accepted'
-            """, (team,)) as cursor:
-
-                players = await cursor.fetchall()
-
-        for p in players:
-
-            text += f"""
-👤 {p[0]}
-🌐 {p[1]}
-📱 {p[2]}
-
-"""
-
-    await message.answer(text)
-
-# ======================================
-# بحث لاعب
-# ======================================
-
-@dp.message(F.text == "🔎 بحث لاعب")
-async def search(message: Message, state: FSMContext):
-
-    await message.answer(
-        "🔎 ارسل اسم اللاعب"
-    )
-
-    await state.set_state(SearchPlayer.text)
-
-
-@dp.message(SearchPlayer.text)
-async def search_player(message: Message, state: FSMContext):
-
-    text = message.text
-
-    async with aiosqlite.connect("union.db") as db:
-
-        async with db.execute("""
-        SELECT
-        team,
-        player_name,
-        facebook,
-        phone
-        FROM players
-        WHERE player_name LIKE ?
-        """, (f"%{text}%",)) as cursor:
-
-            rows = await cursor.fetchall()
-
-    if not rows:
-
-        return await message.answer(
-            "❌ اللاعب غير موجود"
-        )
-
-    result = ""
-
-    for row in rows:
-
-        result += f"""
-🏆 التيم : {row[0]}
-👤 اللاعب : {row[1]}
-🌐 الفيس : {row[2]}
-📱 الرقم : {row[3]}
-
-"""
-
-    await message.answer(result)
-
-    await state.clear()
-
-# ======================================
+# ==============================
 # الطلبات
-# ======================================
+# ==============================
 
 @dp.message(F.text == "📥 الطلبات")
 async def requests(message: Message):
 
-    if not await is_leader(message.from_user.id):
-        return
+    cur.execute(
+        "SELECT * FROM players WHERE status='pending'"
+    )
 
-    async with aiosqlite.connect("union.db") as db:
-
-        async with db.execute("""
-        SELECT
-        player_name,
-        team,
-        phone,
-        facebook,
-        screenshot
-        FROM players
-        WHERE status='pending'
-        """) as cursor:
-
-            rows = await cursor.fetchall()
+    rows = cur.fetchall()
 
     if not rows:
-
         return await message.answer(
             "❌ لا توجد طلبات"
         )
 
     for row in rows:
 
-        text = f"""
-🏆 التيم : {row[1]}
-👤 اللاعب : {row[0]}
-🌐 الفيس : {row[3]}
-📱 الرقم : {row[2]}
-"""
-
-        await bot.send_photo(
-            message.chat.id,
-            row[4],
-            caption=text
+        text = (
+            f"🏆 التيم: {row[1]}\n"
+            f"👤 اللاعب: {row[2]}\n"
+            f"🔗 الفيس:\n{row[3]}\n"
+            f"📱 الرقم: {row[4]}"
         )
 
-# ======================================
-# فتح الانتقالات
-# ======================================
-
-@dp.message(F.text == "🔓 فتح الانتقالات")
-async def open_transfers(message: Message):
-
-    if not await is_leader(message.from_user.id):
-        return
-
-    async with aiosqlite.connect("union.db") as db:
-
-        await db.execute("""
-        UPDATE settings
-        SET value='on'
-        WHERE name='transfers'
-        """)
-
-        await db.commit()
-
-    await message.answer(
-        "✅ تم فتح الانتقالات"
-    )
-
-# ======================================
-# غلق الانتقالات
-# ======================================
-
-@dp.message(F.text == "🔒 غلق الانتقالات")
-async def close_transfers(message: Message):
-
-    if not await is_leader(message.from_user.id):
-        return
-
-    async with aiosqlite.connect("union.db") as db:
-
-        await db.execute("""
-        UPDATE settings
-        SET value='off'
-        WHERE name='transfers'
-        """)
-
-        await db.commit()
-
-    await message.answer(
-        "✅ تم غلق الانتقالات"
-    )
-
-# ======================================
-# اضافة قائد
-# ======================================
-
-@dp.message(F.text == "➕ اضافة قائد")
-async def add_leader(message: Message, state: FSMContext):
-
-    if message.from_user.id != OWNER_ID:
-        return
-
-    await message.answer(
-        "🆔 ارسل ايدي القائد"
-    )
-
-    await state.set_state(AddLeader.user_id)
-
-
-@dp.message(AddLeader.user_id)
-async def save_leader(message: Message, state: FSMContext):
-
-    async with aiosqlite.connect("union.db") as db:
-
-        await db.execute(
-            "INSERT OR IGNORE INTO leaders(user_id) VALUES(?)",
-            (int(message.text),)
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="✅ قبول",
+                        callback_data=f"acc_{row[0]}"
+                    ),
+                    InlineKeyboardButton(
+                        text="❌ رفض",
+                        callback_data=f"rej_{row[0]}"
+                    )
+                ]
+            ]
         )
 
-        await db.commit()
-
-    await message.answer(
-        "✅ تم اضافة القائد"
-    )
-
-    await state.clear()
-
-# ======================================
-# حذف قائد
-# ======================================
-
-@dp.message(F.text == "➖ حذف قائد")
-async def remove_leader(message: Message, state: FSMContext):
-
-    if message.from_user.id != OWNER_ID:
-        return
-
-    await message.answer(
-        "🆔 ارسل ايدي القائد"
-    )
-
-    await state.set_state(RemoveLeader.user_id)
-
-
-@dp.message(RemoveLeader.user_id)
-async def delete_leader(message: Message, state: FSMContext):
-
-    async with aiosqlite.connect("union.db") as db:
-
-        await db.execute(
-            "DELETE FROM leaders WHERE user_id=?",
-            (int(message.text),)
+        await message.answer_photo(
+            row[5],
+            caption=text,
+            reply_markup=kb
         )
 
-        await db.commit()
+# ==============================
+# قبول
+# ==============================
 
-    await message.answer(
-        "✅ تم حذف القائد"
+@dp.callback_query(F.data.startswith("acc_"))
+async def accept(call: CallbackQuery):
+
+    uid = int(call.data.split("_")[1])
+
+    cur.execute(
+        "UPDATE players SET status='accepted' WHERE user_id=?",
+        (uid,)
     )
 
-    await state.clear()
+    db.commit()
 
-# ======================================
-# تشغيل
-# ======================================
+    await bot.send_message(
+        uid,
+        "✅ تمت الموافقة على طلبك"
+    )
+
+    await call.message.edit_caption(
+        caption="✅ accepted"
+    )
+
+# ==============================
+# رفض
+# ==============================
+
+@dp.callback_query(F.data.startswith("rej_"))
+async def reject(call: CallbackQuery):
+
+    uid = int(call.data.split("_")[1])
+
+    cur.execute(
+        "DELETE FROM players WHERE user_id=?",
+        (uid,)
+    )
+
+    db.commit()
+
+    await bot.send_message(
+        uid,
+        "❌ تم رفض طلبك"
+    )
+
+    await call.message.edit_caption(
+        caption="❌ rejected"
+    )
+
+# ==============================
+# عرض التيمات
+# ==============================
+
+@dp.message(F.text == "🏆 عرض التيمات")
+async def teams(message: Message):
+
+    cur.execute(
+        "SELECT DISTINCT team FROM players WHERE status='accepted'"
+    )
+
+    teams = cur.fetchall()
+
+    if not teams:
+        return await message.answer(
+            "❌ لا توجد تيمات"
+        )
+
+    keyboard = []
+
+    for t in teams:
+        keyboard.append([
+            InlineKeyboardButton(
+                text=t[0],
+                callback_data=f"team_{t[0]}"
+            )
+        ])
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=keyboard
+    )
+
+    await message.answer(
+        "🏆 قائمة التيمات",
+        reply_markup=kb
+    )
+
+# ==============================
+# TEAM INFO
+# ==============================
+
+@dp.callback_query(F.data.startswith("team_"))
+async def team_info(call: CallbackQuery):
+
+    team = call.data.replace("team_", "")
+
+    cur.execute(
+        "SELECT * FROM players WHERE team=? AND status='accepted'",
+        (team,)
+    )
+
+    rows = cur.fetchall()
+
+    text = f"🏆 التيم: {team}\n\n"
+
+    for r in rows:
+
+        text += (
+            f"👤 {r[2]}\n"
+            f"🔗 {r[3]}\n"
+            f"📱 {r[4]}\n\n"
+        )
+
+    await call.message.answer(text)
+
+# ==============================
+# RUN
+# ==============================
 
 async def main():
-
-    await setup_db()
-
-    print("BOT RUNNING")
-
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
