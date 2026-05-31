@@ -8,7 +8,7 @@ from datetime import datetime
 # CONFIG
 # =========================
 
-TOKEN = "YOUR_BOT_TOKEN"
+TOKEN = "BOT_TOKEN"
 
 OWNER_ID = 653170487
 
